@@ -1,0 +1,33 @@
+# Mantém o contexto de build enxuto e SEM dados/segredos do cliente.
+# (Docker usa este arquivo, não o .gitignore.)
+.git
+.github
+.claude
+**/__pycache__
+*.pyc
+
+# Segredos / ambiente
+.env
+**/.env
+deploy/.env
+grafana/provisioning/datasources/cockpit_ref.yaml
+
+# Dados CONFIDENCIAIS do cliente
+*.xlsx
+data/
+dashboard/dashboard_data.json
+
+# Runtime / gerados
+*.log
+*.out
+logs/
+backups/
+grafana/data/
+grafana/logs/
+n8n_data/
+*.zip
+
+# Não precisa na imagem da IA
+dashboard/
+docs/
+*.md
