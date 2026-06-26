@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Cockpit Financeiro Estratégico — Ref Comunicação. Visão executiva de resultado (P&amp;L): receita, margens, resultado operacional, lucro líquido, geração de caixa e insights de IA." />
+  <meta name="color-scheme" content="light" />
+  <title>Cockpit Financeiro · Ref Comunicação</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230B1F3A'/%3E%3Cpath d='M8 22 L16 9 L24 22 Z' fill='%234F6BED'/%3E%3Ccircle cx='16' cy='20' r='2.6' fill='%23fff'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <a class="skip-link" href="#main">Pular para o conteúdo</a>
+
+  <!-- ============================ TOP APP BAR ============================ -->
+  <header class="appbar" role="banner">
+    <div class="appbar__inner">
+      <div class="brand" id="brand">
+        <!-- logo placeholder + nome do grupo injetados via JS (BRAND config) -->
+      </div>
+
+      <div class="appbar__center">
+        <h1 class="appbar__title">Cockpit Financeiro Estratégico</h1>
+        <p class="appbar__subtitle" id="appbarSubtitle">Fechamento mensal consolidado</p>
+      </div>
+
+      <div class="appbar__right">
+        <label class="period" for="periodSelect">
+          <span class="period__label">Período fechado</span>
+          <select id="periodSelect" class="period__select" aria-label="Selecionar período fechado"></select>
+        </label>
+        <a href="./upload.html" title="Enviar uma planilha Excel para a ingestão (Fase 1)"
+           style="display:inline-flex;align-items:center;gap:6px;text-decoration:none;font-weight:700;
+                  font-size:13px;color:#fff;background:var(--indigo,#4F6BED);border-radius:9px;padding:8px 13px">
+          + Adicionar planilha
+        </a>
+        <span class="tag tag--demo" title="Dados reais consolidados das 5 unidades (REF+, BD, Viv, 4PR, Zup) — atuais jan–jun 2026, extraídos das planilhas DRE Acumulado e consolidados no PostgreSQL.">
+          <span class="tag__dot" aria-hidden="true"></span>dados reais · jan–jun 2026
+        </span>
+      </div>
+    </div>
+  </header>
+
+  <main id="main" class="layout" role="main">
+    <!-- ============================ COLUNA PRINCIPAL ============================ -->
+    <div class="layout__main">
+
+      <!-- estado de carregamento / erro -->
+      <div id="loadState" class="loadstate" role="status" aria-live="polite">
+        <div class="spinner" aria-hidden="true"></div>
+        <p>Carregando dados do fechamento…</p>
+      </div>
+
+      <div id="content" class="content" hidden>
+
+        <!-- ---------------- KPI TILES ---------------- -->
+        <section class="section section--kpis" aria-labelledby="kpis-h">
+          <h2 id="kpis-h" class="section__title">Indicadores-chave · consolidado</h2>
+          <div id="kpiGrid" class="kpi-grid"></div>
+        </section>
+
+        <!-- ---------------- CHARTS ROW 1 ---------------- -->
+        <section class="section grid grid--2" aria-label="Gráficos consolidados de resultado e caixa">
+          <article class="card chart-card">
+            <header class="card__head">
+              <div>
+                <h3 class="card__title">Receita Líquida vs Resultado Operacional</h3>
+                <p class="card__sub">Mensal consolidado · jan–jun 2026</p>
+              </div>
+              <div class="legend" id="legendResultado"></div>
+            </header>
+            <div class="card__body" id="chartResultado"></div>
+          </article>
+
+          <article class="card chart-card">
+            <header class="card__head">
+              <div>
+                <h3 class="card__title">Geração de Caixa</h3>
+                <p class="card__sub">Acumulada no ano (linha) e geração de cada mês (barras)</p>
+              </div>
+              <div class="legend" id="legendCaixa"></div>
+            </header>
+            <div class="card__body" id="chartCaixa"></div>
+          </article>
+        </section>
+
+        <!-- ---------------- CHARTS ROW 2 ---------------- -->
+        <section class="section grid grid--2" aria-label="Gastos por categoria e orçado vs realizado">
+          <article class="card chart-card">
+            <header class="card__head">
+              <div>
+                <h3 class="card__title">Gastos por Categoria</h3>
+                <p class="card__sub" id="gastosSub">Composição de custos e despesas · último mês</p>
+              </div>
+            </header>
+            <div class="card__body donut-body">
+              <div id="chartDonut" class="donut-wrap"></div>
+              <ul id="donutLegend" class="donut-legend"></ul>
+            </div>
+          </article>
+
+          <article class="card chart-card">
+            <header class="card__head">
+              <div>
+                <h3 class="card__title">Receita Líquida por Unidade</h3>
+                <p class="card__sub">Acumulado jan–jun · participação no grupo</p>
+              </div>
+            </header>
+            <div class="card__body" id="chartOrcado"></div>
+          </article>
+        </section>
+
+        <!-- ---------------- PER-COMPANY ---------------- -->
+        <section class="section" aria-labelledby="emp-h">
+          <div class="section__head">
+            <h2 id="emp-h" class="section__title">Desempenho por Unidade · YTD</h2>
+            <span class="section__hint">acumulado jan–jun 2026</span>
+          </div>
+          <div id="companyCards" class="company-grid"></div>
+        </section>
+
+        <!-- ---------------- DRE CONSOLIDADA ---------------- -->
+        <section class="section" aria-label="DRE consolidada">
+          <article class="card">
+            <header class="card__head">
+              <div>
+                <h3 class="card__title">DRE Consolidada</h3>
+                <p class="card__sub" id="dreSub">Mês fechado · acumulado · % da receita líquida</p>
+              </div>
+            </header>
+            <div class="card__body table-scroll">
+              <table class="dre" id="dreTable">
+                <thead>
+                  <tr>
+                    <th scope="col">Linha</th>
+                    <th scope="col" class="num">Mês (jun)</th>
+                    <th scope="col" class="num">Acum. jan–jun</th>
+                    <th scope="col" class="num">% Rec. Líq.</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </article>
+        </section>
+      </div>
+    </div>
+
+    <!-- ============================ SIDE PANEL ============================ -->
+    <aside class="layout__side" aria-label="Inteligência artificial">
+
+      <!-- KEY INSIGHTS (IA) -->
+      <section class="card card--insights" aria-labelledby="insights-h">
+        <header class="card__head">
+          <div>
+            <h2 id="insights-h" class="card__title">
+              <span class="ai-spark" aria-hidden="true">✦</span> Key Insights (IA)
+            </h2>
+            <p class="card__sub">Comentário de variação do fechamento</p>
+          </div>
+        </header>
+        <div class="card__body">
+          <ul id="insightsList" class="insights"></ul>
+        </div>
+      </section>
+
+      <!-- ASK YOUR DATA (RAG) -->
+      <section class="card card--ask" aria-labelledby="ask-h">
+        <header class="card__head">
+          <div>
+            <h2 id="ask-h" class="card__title">
+              <span class="ai-spark" aria-hidden="true">✦</span> Pergunte aos seus dados (IA)
+              <button type="button" class="info-btn" id="ragInfoBtn" aria-label="Sobre a interface de IA"
+                title="Interface de consulta em linguagem natural (RAG · Fase 2). Tenta o endpoint configurado (n8n /webhook/cockpit-ask); offline, responde com exemplos ancorados nos dados do fechamento.">ⓘ</button>
+            </h2>
+            <p class="card__sub" id="ragStatus">Consulta em linguagem natural · fundamentada nos seus números</p>
+          </div>
+        </header>
+        <div class="card__body">
+          <form id="askForm" class="ask-form" autocomplete="off">
+            <div class="ask-input-wrap">
+              <input id="askInput" class="ask-input" type="text"
+                placeholder="Ex.: Qual a receita líquida acumulada do grupo?"
+                aria-label="Faça uma pergunta sobre seus dados financeiros" />
+              <button id="askSubmit" class="ask-submit" type="submit" aria-label="Enviar pergunta">
+                <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M3 11.5 21 3l-8.5 18-2.2-7.3L3 11.5Z"/></svg>
+              </button>
+            </div>
+            <div id="chips" class="chips" aria-label="Perguntas sugeridas"></div>
+          </form>
+          <div id="askThread" class="ask-thread" aria-live="polite"></div>
+        </div>
+      </section>
+    </aside>
+  </main>
+
+  <footer class="foot" role="contentinfo">
+    <span id="footMeta"></span>
+    <span class="foot__sep">·</span>
+    <span>Cockpit Financeiro Estratégico · n8n + PostgreSQL + RAG (Claude)</span>
+  </footer>
+
+  <!-- Tooltip único reutilizável para gráficos -->
+  <div id="tooltip" class="tooltip" role="tooltip" hidden></div>
+
+  <!-- Endpoint RAG ao vivo (rag/rag_server.py → Postgres + Claude). Editável aqui. -->
+  <script>window.RAG_ENDPOINT = "http://127.0.0.1:5680/ask";</script>
+  <script src="app.js" defer></script>
+</body>
+</html>

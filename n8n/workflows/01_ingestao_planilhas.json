@@ -1,0 +1,684 @@
+{
+  "name": "01 - Ingestão de Planilhas (Cockpit Financeiro)",
+  "nodes": [
+    {
+      "id": "a1b2c3d4-0001-4a01-9001-000000000001",
+      "name": "Agendamento Diário",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -1360,
+        420
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 30 5 * * *"
+            }
+          ]
+        }
+      },
+      "notes": "Dispara todo dia às 05:30 (horário do servidor). Inicia o pipeline de ingestão da fase 1."
+    },
+    {
+      "id": "a1b2c3d4-0002-4a01-9001-000000000002",
+      "name": "Listar Planilhas em data/raw",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        -1140,
+        420
+      ],
+      "parameters": {
+        "operation": "read",
+        "fileSelector": "C:/Users/Administrator/Documents/n8n/data/raw/upload_AUR-IND_2026-06_INVALIDO.xlsx",
+        "options": {
+          "dataPropertyName": "data"
+        }
+      },
+      "notes": "Lê todos os arquivos .xlsx do diretório data/raw como binários. Cada arquivo vira um item com a planilha em binário 'data'."
+    },
+    {
+      "id": "a1b2c3d4-0003-4a01-9001-000000000003",
+      "name": "Abrir Run do Pipeline",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -920,
+        420
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "// Gera um load_id único por arquivo processado e registra metadados da execução.\n// O load_id é a chave estável usada em pipeline_runs, ingestion_log, quarantine_rows e fact_financials.\nconst binProp = 'data';\nconst bin = $binary[binProp];\nconst sourceFile = (bin && bin.fileName) ? bin.fileName : `desconhecido_${$itemIndex}.xlsx`;\n\n// load_id determinístico-ish: timestamp + nome do arquivo + índice (evita colisão no mesmo run)\nconst now = new Date();\nconst pad = (n) => String(n).padStart(2, '0');\nconst stamp = `${now.getUTCFullYear()}${pad(now.getUTCMonth() + 1)}${pad(now.getUTCDate())}${pad(now.getUTCHours())}${pad(now.getUTCMinutes())}${pad(now.getUTCSeconds())}`;\nconst slug = sourceFile.replace(/[^a-zA-Z0-9]+/g, '_').slice(0, 40);\nconst loadId = `LOAD_${stamp}_${slug}_${$itemIndex}`;\n\nreturn {\n  json: {\n    load_id: loadId,\n    workflow: '01_ingestao_planilhas',\n    source_file: sourceFile,\n    started_at: now.toISOString(),\n    status: 'RUNNING',\n  },\n  binary: $input.item.binary,\n};"
+      },
+      "notes": "Cria o load_id (chave de rastreabilidade) e o registro inicial da execução. Um run por arquivo."
+    },
+    {
+      "id": "a1b2c3d4-0004-4a01-9001-000000000004",
+      "name": "Registrar pipeline_runs (início)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -700,
+        420
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO cockpit.pipeline_runs\n  (load_id, workflow, source_file, status, rows_total, rows_ok, rows_quarantined, started_at, finished_at, retries, message)\nVALUES\n  ($1, $2, $3, 'RUNNING', 0, 0, 0, $4::timestamptz, NULL, 0, 'Ingestão iniciada')\nON CONFLICT (load_id) DO UPDATE\n  SET status = 'RUNNING', started_at = EXCLUDED.started_at, message = 'Ingestão reiniciada';",
+        "options": {
+          "queryReplacement": "={{ $json.load_id }},{{ $json.workflow }},{{ $json.source_file }},{{ $json.started_at }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_COCKPIT",
+          "name": "Postgres Cockpit"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "notes": "Abre a linha em cockpit.pipeline_runs com status RUNNING. Com RETRY automático (3 tentativas, 5s)."
+    },
+    {
+      "id": "a1b2c3d4-0005-4a01-9001-000000000005",
+      "name": "Parsear XLSX",
+      "type": "n8n-nodes-base.spreadsheetFile",
+      "typeVersion": 2,
+      "position": [
+        -480,
+        420
+      ],
+      "parameters": {
+        "operation": "fromFile",
+        "fileFormat": "xlsx",
+        "binaryPropertyName": "data",
+        "options": {
+          "headerRow": true,
+          "rawData": false,
+          "readAsString": true
+        }
+      },
+      "notes": "Converte a planilha binária em linhas (1 item por linha). headerRow=true usa a primeira linha como nomes de coluna. Lê como texto para preservar formatos brutos."
+    },
+    {
+      "id": "a1b2c3d4-0006-4a01-9001-000000000006",
+      "name": "Anexar load_id às Linhas",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -260,
+        420
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// O nó Spreadsheet perde o load_id/source_file do item original. Recuperamos do nó anterior\n// e anexamos a todas as linhas, além de numerá-las (row_num) para rastreabilidade na quarentena.\nconst meta = $('Abrir Run do Pipeline').first().json;\nconst loadId = meta.load_id;\nconst sourceFile = meta.source_file;\n\nconst items = $input.all();\nreturn items.map((item, idx) => ({\n  json: {\n    ...item.json,\n    __load_id: loadId,\n    __source_file: sourceFile,\n    __row_num: idx + 2, // +2: linha 1 é cabeçalho, linhas de dados começam em 2\n  },\n}));"
+      },
+      "notes": "Propaga load_id e source_file para cada linha e atribui row_num (linha física na planilha, considerando cabeçalho)."
+    },
+    {
+      "id": "a1b2c3d4-0008-4a01-9001-000000000008",
+      "name": "Inserir em stg_financials",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        300,
+        260
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO cockpit.stg_financials\n  (load_id, source_file, row_num, company_id, period_date, account_code, valor_realizado, valor_orcado, created_at)\nVALUES\n  ($1, $2, $3::int, $4, $5::text, $6, $7::text, $8::text, now());",
+        "options": {
+          "queryReplacement": "={{ $json.load_id }},{{ $json.source_file }},{{ $json.row_num }},{{ $json.company_id }},{{ $json.period_date }},{{ $json.account_code }},{{ $json.valor_realizado }},{{ $json.valor_orcado }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_COCKPIT",
+          "name": "Postgres Cockpit"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "notes": "Espelho bruto (staging) das linhas válidas em cockpit.stg_financials (colunas texto). RETRY 3x/5s."
+    },
+    {
+      "id": "a1b2c3d4-0009-4a01-9001-000000000009",
+      "name": "Upsert em fact_financials",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        520,
+        260
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO cockpit.fact_financials\n  (company_id, period_date, account_code, valor_realizado, valor_orcado, source_file, load_id, created_at)\nVALUES\n  ($1, $2::date, $3, $4::numeric, $5::numeric, $6, $7, now())\nON CONFLICT (company_id, period_date, account_code) DO UPDATE\n  SET valor_realizado = EXCLUDED.valor_realizado,\n      valor_orcado    = EXCLUDED.valor_orcado,\n      source_file     = EXCLUDED.source_file,\n      load_id         = EXCLUDED.load_id,\n      created_at      = now();",
+        "options": {
+          "queryReplacement": "={{ $json.company_id }},{{ $json.period_date }},{{ $json.account_code }},{{ $json.valor_realizado }},{{ $json.valor_orcado }},{{ $json.source_file }},{{ $json.load_id }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_COCKPIT",
+          "name": "Postgres Cockpit"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "notes": "Upsert idempotente na tabela de fatos. Chave única (company_id, period_date, account_code). RETRY 3x/5s."
+    },
+    {
+      "id": "a1b2c3d4-0010-4a01-9001-000000000010",
+      "name": "Inserir em quarantine_rows",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        300,
+        620
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO cockpit.quarantine_rows\n  (load_id, source_file, row_num, raw_payload, error_code, error_detail, created_at)\nVALUES\n  ($1, $2, $3::int, $4::jsonb, $5, $6, now());",
+        "options": {
+          "queryReplacement": "={{ $json.load_id }},{{ $json.source_file }},{{ $json.row_num }},{{ JSON.stringify($json.raw_payload) }},{{ $json.error_code }},{{ $json.error_detail }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_COCKPIT",
+          "name": "Postgres Cockpit"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "notes": "Linhas reprovadas vão para cockpit.quarantine_rows com payload bruto (jsonb) e código/detalhe do erro. RETRY 3x/5s."
+    },
+    {
+      "id": "a1b2c3d4-0011-4a01-9001-000000000011",
+      "name": "Agregar Contagens",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        760,
+        420
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Consolida contagens do run (uma execução = um arquivo) e prepara o fechamento.\nconst meta = $('Abrir Run do Pipeline').first().json;\nlet rowsOk = 0, rowsQuarantined = 0;\ntry { rowsOk = $('Validar — Válidas').all().length; } catch (e) { rowsOk = 0; }\ntry { rowsQuarantined = $('Validar — Inválidas').all().length; } catch (e) { rowsQuarantined = 0; }\nconst rowsTotal = rowsOk + rowsQuarantined;\nconst status = rowsQuarantined > 0 ? 'PARTIAL' : 'OK';   // CHECK: RUNNING|OK|PARTIAL|ERROR\nreturn [{\n  json: {\n    load_id: meta.load_id,\n    workflow: meta.workflow,\n    source_file: meta.source_file,\n    rows_total: rowsTotal,\n    rows_ok: rowsOk,\n    rows_quarantined: rowsQuarantined,\n    status,\n    finished_at: new Date().toISOString(),\n    message: `${rowsOk}/${rowsTotal} carregadas, ${rowsQuarantined} em quarentena.`,\n  },\n}];\n"
+      },
+      "notes": "Soma linhas válidas e em quarentena para fechar o run. Define status final (SUCCESS / SUCCESS_WITH_QUARANTINE / EMPTY)."
+    },
+    {
+      "id": "a1b2c3d4-0012-4a01-9001-000000000012",
+      "name": "Fechar pipeline_runs",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        980,
+        420
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE cockpit.pipeline_runs\n   SET status = $2,\n       rows_total = $3::int,\n       rows_ok = $4::int,\n       rows_quarantined = $5::int,\n       finished_at = $6::timestamptz,\n       message = $7\n WHERE load_id = $1\nRETURNING load_id;",
+        "options": {
+          "queryReplacement": "={{ $json.load_id }},{{ $json.status }},{{ $json.rows_total }},{{ $json.rows_ok }},{{ $json.rows_quarantined }},{{ $json.finished_at }},{{ $json.message }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_COCKPIT",
+          "name": "Postgres Cockpit"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "notes": "Fecha o run em cockpit.pipeline_runs com contagens e status final. RETRY 3x/5s."
+    },
+    {
+      "id": "a1b2c3d4-0013-4a01-9001-000000000013",
+      "name": "Registrar ingestion_log (sucesso)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1200,
+        420
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO cockpit.ingestion_log\n  (load_id, level, step, message, payload, created_at)\nVALUES\n  ($1, 'INFO', 'ingestao_concluida', $2, $3::jsonb, now());",
+        "options": {
+          "queryReplacement": "={{ $('Agregar Contagens').first().json.load_id }},{{ $('Agregar Contagens').first().json.message }},{{ JSON.stringify({ rows_total: $('Agregar Contagens').first().json.rows_total, rows_ok: $('Agregar Contagens').first().json.rows_ok, rows_quarantined: $('Agregar Contagens').first().json.rows_quarantined, status: $('Agregar Contagens').first().json.status, source_file: $('Agregar Contagens').first().json.source_file }) }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_COCKPIT",
+          "name": "Postgres Cockpit"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "notes": "Grava log estruturado (nível INFO) em cockpit.ingestion_log ao fim do run. RETRY 3x/5s."
+    },
+    {
+      "id": "a1b2c3d4-0014-4a01-9001-000000000014",
+      "name": "Tratamento de Erro",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        -700,
+        860
+      ],
+      "parameters": {},
+      "notes": "Disparado automaticamente quando QUALQUER nó do workflow falha de forma não tratada. Início do caminho de erro."
+    },
+    {
+      "id": "a1b2c3d4-0015-4a01-9001-000000000015",
+      "name": "Montar Payload de Erro",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -480,
+        860
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "// Extrai detalhes do erro do Error Trigger para registrar em ingestion_log e marcar o run como FAILED.\nconst err = $json;\nconst execErr = (err.execution && err.execution.error) || {};\nconst lastNode = (err.execution && err.execution.lastNodeExecuted) || 'desconhecido';\n\n// Tenta recuperar o load_id do contexto da execução que falhou (se disponível).\nlet loadId = 'DESCONHECIDO';\ntry {\n  const inputData = err.execution && err.execution.data;\n  // Fallback: o load_id pode não estar acessível; registramos o que houver.\n  loadId = (err.workflow && err.workflow.id) ? `WF_${err.workflow.id}_FALHA` : 'DESCONHECIDO';\n} catch (e) {\n  loadId = 'DESCONHECIDO';\n}\n\nreturn {\n  json: {\n    load_id: loadId,\n    level: 'ERROR',\n    step: lastNode,\n    message: execErr.message || 'Falha não tratada no pipeline de ingestão',\n    payload: {\n      node: lastNode,\n      error_message: execErr.message || null,\n      error_stack: execErr.stack || null,\n      execution_id: (err.execution && err.execution.id) || null,\n      workflow_name: (err.workflow && err.workflow.name) || null,\n    },\n  },\n};"
+      },
+      "notes": "Normaliza o evento de erro em um payload para log. Identifica o nó que falhou e a mensagem."
+    },
+    {
+      "id": "a1b2c3d4-0016-4a01-9001-000000000016",
+      "name": "Registrar ingestion_log (erro)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -260,
+        860
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO cockpit.ingestion_log\n  (load_id, level, step, message, payload, created_at)\nVALUES\n  ($1, 'ERROR', $2, $3, $4::jsonb, now());",
+        "options": {
+          "queryReplacement": "={{ $json.load_id }},{{ $json.step }},{{ $json.message }},{{ JSON.stringify($json.payload) }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_COCKPIT",
+          "name": "Postgres Cockpit"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "notes": "Grava o erro em cockpit.ingestion_log (nível ERROR) para auditoria operacional. RETRY 2x/3s."
+    },
+    {
+      "id": "a1b2c3d4-0017-4a01-9001-000000000017",
+      "name": "Marcar pipeline_runs FAILED",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -40,
+        860
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE cockpit.pipeline_runs\n   SET status = 'FAILED',\n       finished_at = now(),\n       retries = retries + 1,\n       message = $2\n WHERE load_id = $1 AND status = 'RUNNING';",
+        "options": {
+          "queryReplacement": "={{ $json.load_id }},{{ $json.message }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_COCKPIT",
+          "name": "Postgres Cockpit"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "notes": "Marca runs em aberto como FAILED. Best-effort: depende de o load_id ter sido capturado pelo Error Trigger. RETRY 2x/3s."
+    },
+    {
+      "id": "note-01-0001",
+      "name": "Nota: Disparo e Leitura",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -1400,
+        160
+      ],
+      "parameters": {
+        "width": 520,
+        "height": 220,
+        "color": 4,
+        "content": "## 1 · Disparo & Leitura\n\nO **Agendamento Diário** roda às 05:30. A leitura busca todos os `*.xlsx` em **`data/raw`** como binários.\n\nCada arquivo recebe um **`load_id`** único — a chave de rastreabilidade usada em `pipeline_runs`, `ingestion_log`, `quarantine_rows` e `fact_financials`.\n\nO run é aberto em `cockpit.pipeline_runs` com status `RUNNING`."
+      }
+    },
+    {
+      "id": "note-01-0002",
+      "name": "Nota: Parse e Validação",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -540,
+        160
+      ],
+      "parameters": {
+        "width": 540,
+        "height": 220,
+        "color": 5,
+        "content": "## 2 · Parse & Validação de Schema\n\nO nó **Spreadsheet File** converte o XLSX em linhas. A **Validação de Schema** aplica as 6 regras do SPEC:\n\n1. Colunas obrigatórias presentes\n2. `period` parseável → 1º dia do mês\n3. `valor` numérico\n4. `valor_orcado` numérico (default 0)\n5. `account_code` ∈ `dim_account`\n6. `company_id` ∈ `dim_company`\n\n**Saída 0** = válidas · **Saída 1** = quarentena."
+      }
+    },
+    {
+      "id": "note-01-0003",
+      "name": "Nota: Persistência",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        260,
+        20
+      ],
+      "parameters": {
+        "width": 460,
+        "height": 200,
+        "color": 3,
+        "content": "## 3 · Persistência (linhas válidas)\n\nLinhas válidas → **`stg_financials`** (staging bruto, texto) → **upsert** em **`fact_financials`** com chave única `(company_id, period_date, account_code)`.\n\nTodos os nós Postgres têm **RETRY** habilitado (3 tentativas, 5s entre elas)."
+      }
+    },
+    {
+      "id": "note-01-0004",
+      "name": "Nota: Quarentena",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        260,
+        780
+      ],
+      "parameters": {
+        "width": 460,
+        "height": 180,
+        "color": 2,
+        "content": "## 4 · Quarentena (linhas inválidas)\n\nLinhas reprovadas → **`quarantine_rows`** com o `raw_payload` (jsonb), `error_code` e `error_detail`.\n\nNada é perdido silenciosamente — toda linha rejeitada fica auditável com o motivo."
+      }
+    },
+    {
+      "id": "note-01-0005",
+      "name": "Nota: Fechamento",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        760,
+        160
+      ],
+      "parameters": {
+        "width": 640,
+        "height": 200,
+        "color": 6,
+        "content": "## 5 · Fechamento do Run\n\nAs contagens de ambos os caminhos são agregadas e o run é fechado em **`pipeline_runs`** (status, `rows_total`, `rows_ok`, `rows_quarantined`, `finished_at`).\n\nUm log estruturado de sucesso é gravado em **`ingestion_log`** (nível INFO)."
+      }
+    },
+    {
+      "id": "note-01-0006",
+      "name": "Nota: Tratamento de Erro",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -740,
+        1080
+      ],
+      "parameters": {
+        "width": 760,
+        "height": 180,
+        "color": 1,
+        "content": "## ⚠ Caminho de Erro\n\nO **Error Trigger** captura qualquer falha não tratada. Registra o erro em **`ingestion_log`** (nível ERROR) e marca o run em aberto como **`FAILED`** em `pipeline_runs`.\n\nCombinado com o RETRY automático dos nós Postgres, garante resiliência contra falhas transitórias de banco."
+      }
+    },
+    {
+      "id": "a1b2c3d4-0007-4a01-9001-000000000007-V",
+      "name": "Validar — Válidas",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -40,
+        340
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// ====================================================================================\n// VALIDAÇÃO DE SCHEMA (Fase 1) — conforme SPEC.md\n// Regras:\n//   1. Colunas obrigatórias presentes\n//   2. period (period_date) parseável para 1º dia do mês (DATE)\n//   3. valor (valor_realizado) numérico\n//   4. valor_orcado numérico (se presente; default 0)\n//   5. account_code pertence ao conjunto conhecido (dim_account)\n//   6. company_id pertence ao conjunto conhecido (dim_company)\n// Linhas válidas -> saída 0 (válidas). Linhas inválidas -> saída 1 (quarentena).\n// ====================================================================================\n\n// Conjuntos conhecidos (espelham cockpit.dim_account e cockpit.dim_company do SPEC).\nconst KNOWN_ACCOUNTS = new Set([\n  // P&L (PNL)\n  'R_BRUTA', 'DEDUCOES', 'CMV', 'DESP_PESSOAL', 'DESP_VENDAS', 'DESP_ADM',\n  'DESP_OUTRAS', 'DEPRECIACAO', 'RESULT_FIN', 'IRPJ_CSLL',\n  // Posição (POSICAO)\n  'CAIXA', 'AR', 'AP', 'ESTOQUE', 'DIVIDA', 'PATRIMONIO',\n]);\n\nconst KNOWN_COMPANIES = new Set([\n  'AUR-VAR', 'AUR-IND', 'AUR-SVC', 'AUR-LOG', 'AUR-HLD', 'ELIM',\n]);\n\n// Aceita sinônimos comuns de cabeçalho (PT-BR) para robustez.\n// Resolve NOME da empresa -> company_id (as planilhas trazem o nome na coluna \"empresa\").\nconst COMPANY_BY_NAME = {\n  'AURORA VAREJO S.A.': 'AUR-VAR',\n  'AURORA INDÚSTRIA LTDA.': 'AUR-IND',\n  'AURORA SERVIÇOS LTDA.': 'AUR-SVC',\n  'AURORA LOGÍSTICA LTDA.': 'AUR-LOG',\n  'AURORA PARTICIPAÇÕES S.A.': 'AUR-HLD',\n  'ELIMINAÇÕES INTERCOMPANY': 'ELIM',\n};\nfunction resolveCompany(v) {\n  if (!v) return null;\n  const u = String(v).trim().toUpperCase();\n  if (KNOWN_COMPANIES.has(u)) return u;\n  return COMPANY_BY_NAME[u] || null;\n}\n\nfunction pick(obj, keys) {\n  for (const k of keys) {\n    if (obj[k] !== undefined && obj[k] !== null && String(obj[k]).trim() !== '') {\n      return String(obj[k]).trim();\n    }\n  }\n  return null;\n}\n\nfunction parsePeriod(raw) {\n  if (!raw) return null;\n  const s = String(raw).trim();\n  // Formatos aceitos: YYYY-MM, YYYY-MM-DD, MM/YYYY, DD/MM/YYYY\n  let y, m;\n  let match;\n  if ((match = s.match(/^(\\d{4})-(\\d{2})(?:-(\\d{2}))?$/))) {\n    y = parseInt(match[1], 10); m = parseInt(match[2], 10);\n  } else if ((match = s.match(/^(\\d{2})\\/(\\d{4})$/))) {\n    m = parseInt(match[1], 10); y = parseInt(match[2], 10);\n  } else if ((match = s.match(/^(\\d{2})\\/(\\d{2})\\/(\\d{4})$/))) {\n    m = parseInt(match[2], 10); y = parseInt(match[3], 10);\n  } else {\n    return null;\n  }\n  if (m < 1 || m > 12 || y < 2000 || y > 2100) return null;\n  // Normaliza para o 1º dia do mês (grão mensal do SPEC).\n  return `${y}-${String(m).padStart(2, '0')}-01`;\n}\n\nfunction parseNumber(raw) {\n  if (raw === null || raw === undefined || String(raw).trim() === '') return null;\n  let s = String(raw).trim();\n  // Remove símbolo de moeda e espaços.\n  s = s.replace(/R\\$/gi, '').replace(/\\s/g, '');\n  // Formato pt-BR: 1.234.567,89  -> remove pontos (milhar), troca vírgula por ponto.\n  if (/,\\d{1,2}$/.test(s) || (s.includes('.') && s.includes(','))) {\n    s = s.replace(/\\./g, '').replace(',', '.');\n  } else {\n    // Formato simples; vírgula como decimal isolada.\n    s = s.replace(',', '.');\n  }\n  const n = Number(s);\n  return Number.isFinite(n) ? n : null;\n}\n\nconst REQUIRED = ['company_id', 'period', 'account_code', 'valor'];\nconst valid = [];\nconst invalid = [];\n\nfor (const item of $input.all()) {\n  const row = item.json;\n  const loadId = row.__load_id;\n  const sourceFile = row.__source_file;\n  const rowNum = row.__row_num;\n\n  // Normaliza colunas com sinônimos PT-BR.\n  const companyId = pick(row, ['company_id', 'empresa', 'companyId', 'cod_empresa']);\n  const periodRaw = pick(row, ['period', 'period_date', 'periodo', 'competencia', 'mes']);\n  const accountCode = pick(row, ['account_code', 'conta_codigo', 'conta', 'codigo_conta', 'accountCode']);\n  const valorRaw = pick(row, ['valor', 'valor_realizado', 'realizado', 'value']);\n  const valorOrcadoRaw = pick(row, ['valor_orcado', 'orcado', 'budget', 'valor_orcamento']);\n\n  const errors = [];\n\n  // 1. Colunas obrigatórias\n  if (!companyId) errors.push({ code: 'MISSING_COMPANY_ID', detail: 'company_id ausente ou vazio' });\n  if (!periodRaw) errors.push({ code: 'MISSING_PERIOD', detail: 'period ausente ou vazio' });\n  if (!accountCode) errors.push({ code: 'MISSING_ACCOUNT_CODE', detail: 'account_code ausente ou vazio' });\n  if (valorRaw === null) errors.push({ code: 'MISSING_VALOR', detail: 'valor ausente ou vazio' });\n\n  // 2. period parseável\n  const periodDate = parsePeriod(periodRaw);\n  if (periodRaw && !periodDate) {\n    errors.push({ code: 'INVALID_PERIOD', detail: `period '${periodRaw}' não é uma competência válida` });\n  }\n\n  // 3. valor numérico\n  const valorRealizado = parseNumber(valorRaw);\n  if (valorRaw !== null && valorRealizado === null) {\n    errors.push({ code: 'INVALID_VALOR', detail: `valor '${valorRaw}' não é numérico` });\n  }\n\n  // 4. valor_orcado numérico (opcional, default 0)\n  let valorOrcado = 0;\n  if (valorOrcadoRaw !== null) {\n    const parsed = parseNumber(valorOrcadoRaw);\n    if (parsed === null) {\n      errors.push({ code: 'INVALID_VALOR_ORCADO', detail: `valor_orcado '${valorOrcadoRaw}' não é numérico` });\n    } else {\n      valorOrcado = parsed;\n    }\n  }\n\n  // 5. account_code conhecido\n  if (accountCode && !KNOWN_ACCOUNTS.has(accountCode.toUpperCase())) {\n    errors.push({ code: 'UNKNOWN_ACCOUNT_CODE', detail: `account_code '${accountCode}' não está em dim_account` });\n  }\n\n  // 6. company_id conhecido\n  const resolvedCompany = resolveCompany(companyId);\n  if (companyId && !resolvedCompany) {\n    errors.push({ code: 'UNKNOWN_COMPANY_ID', detail: `company_id '${companyId}' não está em dim_company` });\n  }\n\n  if (errors.length === 0) {\n    valid.push({\n      json: {\n        load_id: loadId,\n        source_file: sourceFile,\n        row_num: rowNum,\n        company_id: resolvedCompany,\n        period_date: periodDate,\n        account_code: accountCode.toUpperCase(),\n        valor_realizado: valorRealizado,\n        valor_orcado: valorOrcado,\n      },\n    });\n  } else {\n    invalid.push({\n      json: {\n        load_id: loadId,\n        source_file: sourceFile,\n        row_num: rowNum,\n        raw_payload: row,\n        error_code: errors[0].code,\n        error_detail: errors.map((e) => `${e.code}: ${e.detail}`).join(' | '),\n      },\n    });\n  }\n}\n\n// Saída 0 = válidas; Saída 1 = inválidas (quarentena).\nreturn valid;   // saída única: apenas linhas VÁLIDAS (-> stg_financials)"
+      },
+      "notes": "Núcleo da qualidade de dados. Aplica as 6 regras do SPEC. Saída 0 = válidas; Saída 1 = quarentena."
+    },
+    {
+      "id": "a1b2c3d4-0007-4a01-9001-000000000007-I",
+      "name": "Validar — Inválidas",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -40,
+        500
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// ====================================================================================\n// VALIDAÇÃO DE SCHEMA (Fase 1) — conforme SPEC.md\n// Regras:\n//   1. Colunas obrigatórias presentes\n//   2. period (period_date) parseável para 1º dia do mês (DATE)\n//   3. valor (valor_realizado) numérico\n//   4. valor_orcado numérico (se presente; default 0)\n//   5. account_code pertence ao conjunto conhecido (dim_account)\n//   6. company_id pertence ao conjunto conhecido (dim_company)\n// Linhas válidas -> saída 0 (válidas). Linhas inválidas -> saída 1 (quarentena).\n// ====================================================================================\n\n// Conjuntos conhecidos (espelham cockpit.dim_account e cockpit.dim_company do SPEC).\nconst KNOWN_ACCOUNTS = new Set([\n  // P&L (PNL)\n  'R_BRUTA', 'DEDUCOES', 'CMV', 'DESP_PESSOAL', 'DESP_VENDAS', 'DESP_ADM',\n  'DESP_OUTRAS', 'DEPRECIACAO', 'RESULT_FIN', 'IRPJ_CSLL',\n  // Posição (POSICAO)\n  'CAIXA', 'AR', 'AP', 'ESTOQUE', 'DIVIDA', 'PATRIMONIO',\n]);\n\nconst KNOWN_COMPANIES = new Set([\n  'AUR-VAR', 'AUR-IND', 'AUR-SVC', 'AUR-LOG', 'AUR-HLD', 'ELIM',\n]);\n\n// Aceita sinônimos comuns de cabeçalho (PT-BR) para robustez.\n// Resolve NOME da empresa -> company_id (as planilhas trazem o nome na coluna \"empresa\").\nconst COMPANY_BY_NAME = {\n  'AURORA VAREJO S.A.': 'AUR-VAR',\n  'AURORA INDÚSTRIA LTDA.': 'AUR-IND',\n  'AURORA SERVIÇOS LTDA.': 'AUR-SVC',\n  'AURORA LOGÍSTICA LTDA.': 'AUR-LOG',\n  'AURORA PARTICIPAÇÕES S.A.': 'AUR-HLD',\n  'ELIMINAÇÕES INTERCOMPANY': 'ELIM',\n};\nfunction resolveCompany(v) {\n  if (!v) return null;\n  const u = String(v).trim().toUpperCase();\n  if (KNOWN_COMPANIES.has(u)) return u;\n  return COMPANY_BY_NAME[u] || null;\n}\n\nfunction pick(obj, keys) {\n  for (const k of keys) {\n    if (obj[k] !== undefined && obj[k] !== null && String(obj[k]).trim() !== '') {\n      return String(obj[k]).trim();\n    }\n  }\n  return null;\n}\n\nfunction parsePeriod(raw) {\n  if (!raw) return null;\n  const s = String(raw).trim();\n  // Formatos aceitos: YYYY-MM, YYYY-MM-DD, MM/YYYY, DD/MM/YYYY\n  let y, m;\n  let match;\n  if ((match = s.match(/^(\\d{4})-(\\d{2})(?:-(\\d{2}))?$/))) {\n    y = parseInt(match[1], 10); m = parseInt(match[2], 10);\n  } else if ((match = s.match(/^(\\d{2})\\/(\\d{4})$/))) {\n    m = parseInt(match[1], 10); y = parseInt(match[2], 10);\n  } else if ((match = s.match(/^(\\d{2})\\/(\\d{2})\\/(\\d{4})$/))) {\n    m = parseInt(match[2], 10); y = parseInt(match[3], 10);\n  } else {\n    return null;\n  }\n  if (m < 1 || m > 12 || y < 2000 || y > 2100) return null;\n  // Normaliza para o 1º dia do mês (grão mensal do SPEC).\n  return `${y}-${String(m).padStart(2, '0')}-01`;\n}\n\nfunction parseNumber(raw) {\n  if (raw === null || raw === undefined || String(raw).trim() === '') return null;\n  let s = String(raw).trim();\n  // Remove símbolo de moeda e espaços.\n  s = s.replace(/R\\$/gi, '').replace(/\\s/g, '');\n  // Formato pt-BR: 1.234.567,89  -> remove pontos (milhar), troca vírgula por ponto.\n  if (/,\\d{1,2}$/.test(s) || (s.includes('.') && s.includes(','))) {\n    s = s.replace(/\\./g, '').replace(',', '.');\n  } else {\n    // Formato simples; vírgula como decimal isolada.\n    s = s.replace(',', '.');\n  }\n  const n = Number(s);\n  return Number.isFinite(n) ? n : null;\n}\n\nconst REQUIRED = ['company_id', 'period', 'account_code', 'valor'];\nconst valid = [];\nconst invalid = [];\n\nfor (const item of $input.all()) {\n  const row = item.json;\n  const loadId = row.__load_id;\n  const sourceFile = row.__source_file;\n  const rowNum = row.__row_num;\n\n  // Normaliza colunas com sinônimos PT-BR.\n  const companyId = pick(row, ['company_id', 'empresa', 'companyId', 'cod_empresa']);\n  const periodRaw = pick(row, ['period', 'period_date', 'periodo', 'competencia', 'mes']);\n  const accountCode = pick(row, ['account_code', 'conta_codigo', 'conta', 'codigo_conta', 'accountCode']);\n  const valorRaw = pick(row, ['valor', 'valor_realizado', 'realizado', 'value']);\n  const valorOrcadoRaw = pick(row, ['valor_orcado', 'orcado', 'budget', 'valor_orcamento']);\n\n  const errors = [];\n\n  // 1. Colunas obrigatórias\n  if (!companyId) errors.push({ code: 'MISSING_COMPANY_ID', detail: 'company_id ausente ou vazio' });\n  if (!periodRaw) errors.push({ code: 'MISSING_PERIOD', detail: 'period ausente ou vazio' });\n  if (!accountCode) errors.push({ code: 'MISSING_ACCOUNT_CODE', detail: 'account_code ausente ou vazio' });\n  if (valorRaw === null) errors.push({ code: 'MISSING_VALOR', detail: 'valor ausente ou vazio' });\n\n  // 2. period parseável\n  const periodDate = parsePeriod(periodRaw);\n  if (periodRaw && !periodDate) {\n    errors.push({ code: 'INVALID_PERIOD', detail: `period '${periodRaw}' não é uma competência válida` });\n  }\n\n  // 3. valor numérico\n  const valorRealizado = parseNumber(valorRaw);\n  if (valorRaw !== null && valorRealizado === null) {\n    errors.push({ code: 'INVALID_VALOR', detail: `valor '${valorRaw}' não é numérico` });\n  }\n\n  // 4. valor_orcado numérico (opcional, default 0)\n  let valorOrcado = 0;\n  if (valorOrcadoRaw !== null) {\n    const parsed = parseNumber(valorOrcadoRaw);\n    if (parsed === null) {\n      errors.push({ code: 'INVALID_VALOR_ORCADO', detail: `valor_orcado '${valorOrcadoRaw}' não é numérico` });\n    } else {\n      valorOrcado = parsed;\n    }\n  }\n\n  // 5. account_code conhecido\n  if (accountCode && !KNOWN_ACCOUNTS.has(accountCode.toUpperCase())) {\n    errors.push({ code: 'UNKNOWN_ACCOUNT_CODE', detail: `account_code '${accountCode}' não está em dim_account` });\n  }\n\n  // 6. company_id conhecido\n  const resolvedCompany = resolveCompany(companyId);\n  if (companyId && !resolvedCompany) {\n    errors.push({ code: 'UNKNOWN_COMPANY_ID', detail: `company_id '${companyId}' não está em dim_company` });\n  }\n\n  if (errors.length === 0) {\n    valid.push({\n      json: {\n        load_id: loadId,\n        source_file: sourceFile,\n        row_num: rowNum,\n        company_id: resolvedCompany,\n        period_date: periodDate,\n        account_code: accountCode.toUpperCase(),\n        valor_realizado: valorRealizado,\n        valor_orcado: valorOrcado,\n      },\n    });\n  } else {\n    invalid.push({\n      json: {\n        load_id: loadId,\n        source_file: sourceFile,\n        row_num: rowNum,\n        raw_payload: row,\n        error_code: errors[0].code,\n        error_detail: errors.map((e) => `${e.code}: ${e.detail}`).join(' | '),\n      },\n    });\n  }\n}\n\n// Saída 0 = válidas; Saída 1 = inválidas (quarentena).\nreturn invalid; // saída única: apenas linhas INVÁLIDAS (-> quarantine_rows)"
+      },
+      "notes": "Núcleo da qualidade de dados. Aplica as 6 regras do SPEC. Saída 0 = válidas; Saída 1 = quarentena."
+    }
+  ],
+  "connections": {
+    "Agendamento Diário": {
+      "main": [
+        [
+          {
+            "node": "Listar Planilhas em data/raw",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Listar Planilhas em data/raw": {
+      "main": [
+        [
+          {
+            "node": "Abrir Run do Pipeline",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Abrir Run do Pipeline": {
+      "main": [
+        [
+          {
+            "node": "Parsear XLSX",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Registrar pipeline_runs (início)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Registrar pipeline_runs (início)": {
+      "main": [
+        []
+      ]
+    },
+    "Parsear XLSX": {
+      "main": [
+        [
+          {
+            "node": "Anexar load_id às Linhas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anexar load_id às Linhas": {
+      "main": [
+        [
+          {
+            "node": "Validar — Válidas",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Validar — Inválidas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Inserir em stg_financials": {
+      "main": [
+        [
+          {
+            "node": "Upsert em fact_financials",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert em fact_financials": {
+      "main": [
+        [
+          {
+            "node": "Agregar Contagens",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Inserir em quarantine_rows": {
+      "main": [
+        [
+          {
+            "node": "Agregar Contagens",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agregar Contagens": {
+      "main": [
+        [
+          {
+            "node": "Fechar pipeline_runs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fechar pipeline_runs": {
+      "main": [
+        [
+          {
+            "node": "Registrar ingestion_log (sucesso)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tratamento de Erro": {
+      "main": [
+        [
+          {
+            "node": "Montar Payload de Erro",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Montar Payload de Erro": {
+      "main": [
+        [
+          {
+            "node": "Registrar ingestion_log (erro)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Registrar ingestion_log (erro)": {
+      "main": [
+        [
+          {
+            "node": "Marcar pipeline_runs FAILED",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar — Válidas": {
+      "main": [
+        [
+          {
+            "node": "Inserir em stg_financials",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar — Inválidas": {
+      "main": [
+        [
+          {
+            "node": "Inserir em quarantine_rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "timezone": "America/Sao_Paulo"
+  },
+  "active": false
+}

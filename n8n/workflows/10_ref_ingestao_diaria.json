@@ -1,0 +1,84 @@
+{
+  "name": "REF — Ingestão Diária (Fase 1)",
+  "id": "refIngestaoDia01",
+  "meta": {},
+  "pinData": {},
+  "nodes": [
+    {
+      "parameters": { "rule": { "interval": [ { "field": "cronExpression", "expression": "0 7 * * *" } ] } },
+      "id": "trigger-0700",
+      "name": "Agendado 07:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [ 240, 300 ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8501/run/ingestao",
+        "options": { "timeout": 300000 }
+      },
+      "id": "http-ingestao",
+      "name": "Rodar Ingestão (HTTP /run)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [ 480, 300 ],
+      "notes": "Blueprint §3.1: roda main.py via HTTP (o nó Execute Command está desabilitado nesta instância n8n). Resposta: {ok, returncode, stdout, stderr}."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "typeValidation": "loose" },
+          "conditions": [
+            { "leftValue": "={{ $json.ok }}", "rightValue": true, "operator": { "type": "boolean", "operation": "true", "singleValue": true } }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "if-sucesso",
+      "name": "Sucesso? (ok = true)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [ 760, 300 ]
+    },
+    {
+      "parameters": {
+        "assignments": { "assignments": [
+          { "id": "a1", "name": "status", "value": "sucesso", "type": "string" },
+          { "id": "a2", "name": "mensagem", "value": "=Ingestão diária concluída.\n{{ $json.stdout }}", "type": "string" }
+        ] }
+      },
+      "id": "notify-ok",
+      "name": "→ Notificar sucesso (e-mail/Telegram)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [ 1020, 200 ],
+      "notes": "Conectar um nó Email Send ou Telegram aqui (credenciais do cliente)."
+    },
+    {
+      "parameters": {
+        "assignments": { "assignments": [
+          { "id": "b1", "name": "status", "value": "erro", "type": "string" },
+          { "id": "b2", "name": "mensagem", "value": "=FALHA na ingestão diária.\n{{ $json.stderr || $json.stdout }}", "type": "string" }
+        ] }
+      },
+      "id": "notify-err",
+      "name": "→ Alertar erro (e-mail/Telegram)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [ 1020, 400 ],
+      "notes": "Conectar um nó Email Send ou Telegram aqui (credenciais do cliente)."
+    }
+  ],
+  "connections": {
+    "Agendado 07:00": { "main": [ [ { "node": "Rodar Ingestão (HTTP /run)", "type": "main", "index": 0 } ] ] },
+    "Rodar Ingestão (HTTP /run)": { "main": [ [ { "node": "Sucesso? (ok = true)", "type": "main", "index": 0 } ] ] },
+    "Sucesso? (ok = true)": { "main": [
+      [ { "node": "→ Notificar sucesso (e-mail/Telegram)", "type": "main", "index": 0 } ],
+      [ { "node": "→ Alertar erro (e-mail/Telegram)", "type": "main", "index": 0 } ]
+    ] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "active": false,
+  "tags": [ { "name": "cockpit-ref" } ]
+}

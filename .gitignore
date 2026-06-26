@@ -1,0 +1,30 @@
+# --- Segredos / ambiente (NUNCA versionar) ---
+.env
+rag/.env
+ia/.env
+grafana/provisioning/datasources/cockpit_ref.yaml
+
+# --- Dados CONFIDENCIAIS do cliente (NAO versionar) ---
+*.xlsx
+data/incoming/
+data/raw/
+data/out/
+dashboard/dashboard_data.json
+
+# --- Gerados / runtime ---
+*.log
+*.out
+logs/
+backups/*.sql
+backups/*.sql.gz
+grafana/data/
+grafana/logs/
+n8n_data/
+*.zip
+__pycache__/
+*.pyc
+
+# --- ferramentas / temporarios ---
+.claude/
+*_tmp.json
+dash_tmp.json

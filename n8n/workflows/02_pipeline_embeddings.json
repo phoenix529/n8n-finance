@@ -1,0 +1,547 @@
+{
+  "name": "02 - Pipeline de Embeddings (Cockpit Financeiro)",
+  "nodes": [
+    {
+      "id": "b2c3d4e5-0001-4b02-9002-000000000001",
+      "name": "Agendamento Diário (pós-ingestão)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -1320,
+        400
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 0 6 * * *"
+            }
+          ]
+        }
+      },
+      "notes": "Roda às 06:00, depois da ingestão (05:30). Atualiza a base de conhecimento (RAG) com narrativas dos dados já consolidados."
+    },
+    {
+      "id": "b2c3d4e5-0002-4b02-9002-000000000002",
+      "name": "Abrir Run de Embeddings",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1100,
+        400
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Gera o load_id deste run de embeddings para rastreabilidade em pipeline_runs / ingestion_log.\nconst now = new Date();\nconst pad = (n) => String(n).padStart(2, '0');\nconst stamp = `${now.getUTCFullYear()}${pad(now.getUTCMonth() + 1)}${pad(now.getUTCDate())}${pad(now.getUTCHours())}${pad(now.getUTCMinutes())}${pad(now.getUTCSeconds())}`;\nreturn [{\n  json: {\n    load_id: `EMBED_${stamp}`,\n    workflow: '02_pipeline_embeddings',\n    started_at: now.toISOString(),\n    embed_model: $env.EMBED_MODEL || 'text-embedding-3-small',\n  },\n}];"
+      },
+      "notes": "Cria load_id do run e captura o modelo de embeddings (EMBED_MODEL do ambiente, dim 1536)."
+    },
+    {
+      "id": "b2c3d4e5-0003-4b02-9002-000000000003",
+      "name": "Registrar pipeline_runs (início)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -880,
+        400
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO cockpit.pipeline_runs\n  (load_id, workflow, source_file, status, rows_total, rows_ok, rows_quarantined, started_at, finished_at, retries, message)\nVALUES\n  ($1, $2, 'cockpit.views', 'RUNNING', 0, 0, 0, $3::timestamptz, NULL, 0, 'Pipeline de embeddings iniciado')\nON CONFLICT (load_id) DO UPDATE SET status = 'RUNNING', started_at = EXCLUDED.started_at;",
+        "options": {
+          "queryReplacement": "={{ $json.load_id }},{{ $json.workflow }},{{ $json.started_at }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_COCKPIT",
+          "name": "Postgres Cockpit"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "notes": "Abre o run em cockpit.pipeline_runs. RETRY 3x/5s."
+    },
+    {
+      "id": "b2c3d4e5-0004-4b02-9002-000000000004",
+      "name": "Consultar Views (P&L + Posição)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -660,
+        400
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Combina P&L por empresa-mês e posição por empresa-mês em um único conjunto de\n-- fatos narrativos. Cada linha vira um documento textual na base de conhecimento.\nWITH pnl AS (\n  SELECT\n    p.company_id,\n    c.name AS company_name,\n    p.period_date,\n    p.receita_liquida,\n    p.lucro_bruto,\n    p.ebitda,\n    p.ebit,\n    p.lucro_liquido,\n    p.margem_bruta_pct,\n    p.margem_ebitda_pct,\n    p.margem_liquida_pct\n  FROM cockpit.v_pnl_company_month p\n  JOIN cockpit.dim_company c ON c.company_id = p.company_id\n),\npos AS (\n  SELECT\n    company_id,\n    period_date,\n    divida_liquida,\n    capital_giro,\n    dso_dias\n  FROM cockpit.v_position_company_month\n)\nSELECT\n  pnl.company_id,\n  pnl.company_name,\n  to_char(pnl.period_date, 'YYYY-MM')          AS periodo,\n  pnl.period_date,\n  round(pnl.receita_liquida, 2)                AS receita_liquida,\n  round(pnl.lucro_bruto, 2)                    AS lucro_bruto,\n  round(pnl.ebitda, 2)                         AS ebitda,\n  round(pnl.ebit, 2)                           AS ebit,\n  round(pnl.lucro_liquido, 2)                  AS lucro_liquido,\n  round(pnl.margem_bruta_pct, 1)               AS margem_bruta_pct,\n  round(pnl.margem_ebitda_pct, 1)              AS margem_ebitda_pct,\n  round(pnl.margem_liquida_pct, 1)             AS margem_liquida_pct,\n  round(coalesce(pos.divida_liquida, 0), 2)    AS divida_liquida,\n  round(coalesce(pos.capital_giro, 0), 2)      AS capital_giro,\n  round(coalesce(pos.dso_dias, 0), 1)          AS dso_dias\nFROM pnl\nLEFT JOIN pos\n  ON pos.company_id = pnl.company_id\n AND pos.period_date = pnl.period_date\nORDER BY pnl.period_date, pnl.company_id;",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_COCKPIT",
+          "name": "Postgres Cockpit"
+        }
+      },
+      "onError": "stopWorkflow",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "notes": "Lê das views de KPI (v_pnl_company_month + v_position_company_month). Uma linha por empresa-mês. RETRY 3x/5s."
+    },
+    {
+      "id": "b2c3d4e5-0005-4b02-9002-000000000005",
+      "name": "Construir Documentos Narrativos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -440,
+        400
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Transforma cada linha empresa-mês em uma narrativa em PT-BR (PME = 'fact narrative').\n// Esses textos são os chunks de cockpit.kb_documents que serão embeddados.\nconst fmtBRL = (v) => {\n  const n = Number(v) || 0;\n  return n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });\n};\nconst fmtPct = (v) => `${(Number(v) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;\n\nconst out = [];\nfor (const item of $input.all()) {\n  const r = item.json;\n  const titulo = `Desempenho da ${r.company_name} em ${r.periodo}`;\n  const content =\n    `Em ${r.periodo}, a empresa ${r.company_name} (${r.company_id}) apresentou ` +\n    `receita líquida de ${fmtBRL(r.receita_liquida)}, ` +\n    `lucro bruto de ${fmtBRL(r.lucro_bruto)} (margem bruta ${fmtPct(r.margem_bruta_pct)}), ` +\n    `EBITDA de ${fmtBRL(r.ebitda)} (margem EBITDA ${fmtPct(r.margem_ebitda_pct)}), ` +\n    `EBIT de ${fmtBRL(r.ebit)} e ` +\n    `lucro líquido de ${fmtBRL(r.lucro_liquido)} (margem líquida ${fmtPct(r.margem_liquida_pct)}). ` +\n    `A dívida líquida foi de ${fmtBRL(r.divida_liquida)}, ` +\n    `o capital de giro de ${fmtBRL(r.capital_giro)} e ` +\n    `o prazo médio de recebimento (DSO) de ${(Number(r.dso_dias) || 0).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} dias.`;\n\n  const metadata = {\n    company_id: r.company_id,\n    company_name: r.company_name,\n    periodo: r.periodo,\n    receita_liquida: r.receita_liquida,\n    ebitda: r.ebitda,\n    lucro_liquido: r.lucro_liquido,\n    margem_ebitda_pct: r.margem_ebitda_pct,\n    divida_liquida: r.divida_liquida,\n    dso_dias: r.dso_dias,\n  };\n\n  out.push({\n    json: {\n      doc_type: 'fact_narrative',\n      company_id: r.company_id,\n      period_date: r.period_date,\n      title: titulo,\n      content,\n      metadata,\n      embed_model: $('Abrir Run de Embeddings').first().json.embed_model,\n      load_id: $('Abrir Run de Embeddings').first().json.load_id,\n    },\n  });\n}\nreturn out;"
+      },
+      "notes": "Gera narrativas PT-BR (ex.: 'EBITDA da Aurora Varejo em 2026-05 foi R$ ...'). Cada item = 1 documento de kb_documents."
+    },
+    {
+      "id": "b2c3d4e5-0006-4b02-9002-000000000006",
+      "name": "Upsert em kb_documents",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -220,
+        400
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Upsert do documento narrativo. Retorna o id para vincular o embedding.\nINSERT INTO cockpit.kb_documents\n  (doc_type, company_id, period_date, title, content, metadata, created_at)\nVALUES\n  ($1, $2, $3::date, $4, $5, $6::jsonb, now())\nON CONFLICT (doc_type, company_id, period_date)\n  DO UPDATE SET title = EXCLUDED.title,\n                content = EXCLUDED.content,\n                metadata = EXCLUDED.metadata,\n                created_at = now()\nRETURNING id, content, metadata;",
+        "options": {
+          "queryReplacement": "={{ $json.doc_type }},{{ $json.company_id }},{{ $json.period_date }},{{ $json.title }},{{ $json.content }},{{ JSON.stringify($json.metadata) }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_COCKPIT",
+          "name": "Postgres Cockpit"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "notes": "Grava/atualiza o documento em cockpit.kb_documents e retorna o id (doc_id) para o embedding. Requer índice único (doc_type, company_id, period_date). RETRY 3x/5s."
+    },
+    {
+      "id": "b2c3d4e5-0007-4b02-9002-000000000007",
+      "name": "Anexar doc_id ao Conteúdo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        400
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "// Prepara o item para a chamada de embeddings: precisamos do doc_id (do RETURNING) e do texto.\nreturn {\n  json: {\n    doc_id: $json.id,\n    content: $json.content,\n    embed_model: $env.EMBED_MODEL || 'text-embedding-3-small',\n    load_id: $('Abrir Run de Embeddings').first().json.load_id,\n  },\n};"
+      },
+      "notes": "Mapeia o id retornado para doc_id e prepara o texto que será enviado ao endpoint de embeddings."
+    },
+    {
+      "id": "b2c3d4e5-0008-4b02-9002-000000000008",
+      "name": "Gerar Embedding (HTTP)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        220,
+        400
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.EMBED_ENDPOINT || 'https://api.openai.com/v1/embeddings' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: $json.embed_model, input: $json.content }) }}",
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "neverError": false,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "EMBEDDINGS_API",
+          "name": "Embeddings API (header auth)"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 4,
+      "waitBetweenTries": 4000,
+      "notes": "Endpoint de embeddings configurável via EMBED_ENDPOINT (default OpenAI). Auth por header (credencial). Retorna vetor dim 1536. RETRY 4x/4s. Erros vão à saída de erro."
+    },
+    {
+      "id": "b2c3d4e5-0009-4b02-9002-000000000009",
+      "name": "Extrair Vetor",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "// Extrai o vetor da resposta do endpoint de embeddings (formato OpenAI-compatível:\n// { data: [ { embedding: [...] } ], model: '...' }). Formata como literal de vetor pgvector.\nconst resp = $json;\nlet vector = null;\nlet model = $('Anexar doc_id ao Conteúdo').item.json.embed_model;\n\nif (resp && Array.isArray(resp.data) && resp.data[0] && Array.isArray(resp.data[0].embedding)) {\n  vector = resp.data[0].embedding;\n  if (resp.model) model = resp.model;\n} else if (Array.isArray(resp.embedding)) {\n  vector = resp.embedding;\n} else if (Array.isArray(resp)) {\n  vector = resp;\n}\n\nif (!vector || vector.length === 0) {\n  throw new Error('Resposta de embeddings sem vetor válido: ' + JSON.stringify(resp).slice(0, 300));\n}\n\n// Literal de vetor pgvector: '[0.1,0.2,...]'\nconst vectorLiteral = '[' + vector.map((x) => Number(x)).join(',') + ']';\n\nreturn {\n  json: {\n    doc_id: $('Anexar doc_id ao Conteúdo').item.json.doc_id,\n    model,\n    dim: vector.length,\n    embedding: vectorLiteral,\n    load_id: $('Anexar doc_id ao Conteúdo').item.json.load_id,\n  },\n};"
+      },
+      "notes": "Normaliza a resposta (OpenAI-compatível) e monta o literal de vetor para o pgvector. Valida que o vetor existe."
+    },
+    {
+      "id": "b2c3d4e5-0010-4b02-9002-000000000010",
+      "name": "Upsert em kb_embeddings",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        660,
+        300
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Upsert do embedding por documento. Substitui o vetor quando o documento é reembeddado.\nINSERT INTO cockpit.kb_embeddings\n  (doc_id, embedding, model, created_at)\nVALUES\n  ($1::int, $2::vector, $3, now())\nON CONFLICT (doc_id)\n  DO UPDATE SET embedding = EXCLUDED.embedding,\n                model = EXCLUDED.model,\n                created_at = now();",
+        "options": {
+          "queryReplacement": "={{ $json.doc_id }},{{ $json.embedding }},{{ $json.model }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_COCKPIT",
+          "name": "Postgres Cockpit"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "notes": "Grava/atualiza o vetor em cockpit.kb_embeddings (vector(1536)). Requer índice único (doc_id). RETRY 3x/5s."
+    },
+    {
+      "id": "b2c3d4e5-0011-4b02-9002-000000000011",
+      "name": "Registrar Falha de Embedding",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        440,
+        560
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO cockpit.ingestion_log\n  (load_id, level, step, message, payload, created_at)\nVALUES\n  ($1, 'WARN', 'embedding_falhou', $2, $3::jsonb, now());",
+        "options": {
+          "queryReplacement": "={{ $json.load_id || 'EMBED_DESCONHECIDO' }},{{ 'Falha ao gerar embedding para o documento ' + ($json.doc_id || '?') }},{{ JSON.stringify({ doc_id: $json.doc_id || null, error: ($json.error && $json.error.message) || $json.error || 'erro desconhecido' }) }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_COCKPIT",
+          "name": "Postgres Cockpit"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "notes": "Saída de erro do HTTP: registra a falha do embedding em ingestion_log (nível WARN) sem derrubar o run. RETRY 2x/3s."
+    },
+    {
+      "id": "b2c3d4e5-0012-4b02-9002-000000000012",
+      "name": "Fechar Run de Embeddings",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        900,
+        400
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Fecha o run com a contagem real de embeddings vinculados ao load_id.\nWITH cnt AS (\n  SELECT count(*)::int AS n\n    FROM cockpit.kb_embeddings e\n    JOIN cockpit.kb_documents d ON d.id = e.doc_id\n   WHERE date_trunc('second', e.created_at) >= (\n           SELECT started_at FROM cockpit.pipeline_runs WHERE load_id = $1\n         )\n)\nUPDATE cockpit.pipeline_runs r\n   SET status = 'SUCCESS',\n       rows_total = (SELECT n FROM cnt),\n       rows_ok = (SELECT n FROM cnt),\n       finished_at = now(),\n       message = 'Embeddings atualizados: ' || (SELECT n FROM cnt) || ' documentos'\n WHERE r.load_id = $1;",
+        "options": {
+          "queryReplacement": "={{ $('Abrir Run de Embeddings').first().json.load_id }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_COCKPIT",
+          "name": "Postgres Cockpit"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "notes": "Fecha o run em cockpit.pipeline_runs com status SUCCESS e contagem de embeddings. RETRY 3x/5s."
+    },
+    {
+      "id": "b2c3d4e5-0013-4b02-9002-000000000013",
+      "name": "Tratamento de Erro",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        -660,
+        800
+      ],
+      "parameters": {},
+      "notes": "Captura falhas não tratadas (ex.: banco indisponível na consulta de views). Início do caminho de erro."
+    },
+    {
+      "id": "b2c3d4e5-0014-4b02-9002-000000000014",
+      "name": "Registrar ingestion_log (erro)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -440,
+        800
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO cockpit.ingestion_log\n  (load_id, level, step, message, payload, created_at)\nVALUES\n  ('EMBED_FALHA', 'ERROR', $1, $2, $3::jsonb, now());",
+        "options": {
+          "queryReplacement": "={{ ($json.execution && $json.execution.lastNodeExecuted) || 'desconhecido' }},{{ ($json.execution && $json.execution.error && $json.execution.error.message) || 'Falha não tratada no pipeline de embeddings' }},{{ JSON.stringify({ node: ($json.execution && $json.execution.lastNodeExecuted) || null, execution_id: ($json.execution && $json.execution.id) || null }) }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_COCKPIT",
+          "name": "Postgres Cockpit"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "notes": "Grava o erro em cockpit.ingestion_log (nível ERROR) para auditoria. RETRY 2x/3s."
+    },
+    {
+      "id": "note-02-0001",
+      "name": "Nota: Disparo & Fonte",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -1360,
+        120
+      ],
+      "parameters": {
+        "width": 540,
+        "height": 220,
+        "color": 4,
+        "content": "## 1 · Disparo & Fonte de Dados\n\nRoda às **06:00**, logo após a ingestão (05:30) — assim a base de conhecimento reflete os dados já consolidados.\n\nLê das **views de KPI** (`v_pnl_company_month` + `v_position_company_month`), produzindo **uma linha por empresa-mês**.\n\nUm `load_id` (`EMBED_...`) rastreia o run em `pipeline_runs`."
+      }
+    },
+    {
+      "id": "note-02-0002",
+      "name": "Nota: Narrativas",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -480,
+        120
+      ],
+      "parameters": {
+        "width": 460,
+        "height": 200,
+        "color": 5,
+        "content": "## 2 · Documentos Narrativos\n\nCada empresa-mês vira uma **narrativa em PT-BR** (ex.: *\"O EBITDA da Aurora Varejo em 2026-05 foi R$ ...\"*).\n\nGravadas em **`kb_documents`** (`doc_type='fact_narrative'`), com `metadata` jsonb e o `id` retornado para vincular o embedding."
+      }
+    },
+    {
+      "id": "note-02-0003",
+      "name": "Nota: Embeddings",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        180,
+        80
+      ],
+      "parameters": {
+        "width": 520,
+        "height": 200,
+        "color": 6,
+        "content": "## 3 · Geração de Embeddings\n\nO nó **HTTP Request** chama o endpoint configurável **`EMBED_ENDPOINT`** (default OpenAI), modelo **`EMBED_MODEL`** (dim **1536**), com auth por header (credencial).\n\nO vetor é normalizado para literal **pgvector** e gravado em **`kb_embeddings`** (upsert por `doc_id`).\n\nRETRY: 4 tentativas (4s) no HTTP."
+      }
+    },
+    {
+      "id": "note-02-0004",
+      "name": "Nota: Resiliência",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -700,
+        1020
+      ],
+      "parameters": {
+        "width": 760,
+        "height": 160,
+        "color": 1,
+        "content": "## ⚠ Resiliência\n\nFalhas individuais de embedding (saída de erro do HTTP) são registradas em `ingestion_log` (WARN) **sem** derrubar o run inteiro.\n\nFalhas estruturais (banco/consulta) caem no **Error Trigger** → `ingestion_log` (ERROR). Todos os nós Postgres têm RETRY automático."
+      }
+    }
+  ],
+  "connections": {
+    "Agendamento Diário (pós-ingestão)": {
+      "main": [
+        [
+          {
+            "node": "Abrir Run de Embeddings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Abrir Run de Embeddings": {
+      "main": [
+        [
+          {
+            "node": "Registrar pipeline_runs (início)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Registrar pipeline_runs (início)": {
+      "main": [
+        [
+          {
+            "node": "Consultar Views (P&L + Posição)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar Views (P&L + Posição)": {
+      "main": [
+        [
+          {
+            "node": "Construir Documentos Narrativos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Construir Documentos Narrativos": {
+      "main": [
+        [
+          {
+            "node": "Upsert em kb_documents",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert em kb_documents": {
+      "main": [
+        [
+          {
+            "node": "Anexar doc_id ao Conteúdo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anexar doc_id ao Conteúdo": {
+      "main": [
+        [
+          {
+            "node": "Gerar Embedding (HTTP)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gerar Embedding (HTTP)": {
+      "main": [
+        [
+          {
+            "node": "Extrair Vetor",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Registrar Falha de Embedding",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extrair Vetor": {
+      "main": [
+        [
+          {
+            "node": "Upsert em kb_embeddings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert em kb_embeddings": {
+      "main": [
+        [
+          {
+            "node": "Fechar Run de Embeddings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tratamento de Erro": {
+      "main": [
+        [
+          {
+            "node": "Registrar ingestion_log (erro)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "timezone": "America/Sao_Paulo"
+  },
+  "active": false
+}

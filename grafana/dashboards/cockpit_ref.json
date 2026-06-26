@@ -1,0 +1,751 @@
+{
+  "uid": "cockpit-ref",
+  "title": "Cockpit Financeiro — REF Group",
+  "tags": [
+    "cockpit",
+    "ref",
+    "financeiro"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30m",
+  "time": {
+    "from": "now-8y",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "empresa",
+        "type": "query",
+        "datasource": {
+          "type": "postgres",
+          "uid": "cockpit_ref_pg"
+        },
+        "label": "Empresa",
+        "query": "SELECT codigo FROM (SELECT 'GRUPO' codigo, 0 o UNION ALL SELECT codigo, 1 o FROM dim_empresa) t ORDER BY o, codigo",
+        "current": {
+          "text": "GRUPO",
+          "value": "GRUPO"
+        },
+        "refresh": 1,
+        "includeAll": false,
+        "multi": false,
+        "sort": 0
+      },
+      {
+        "name": "ano",
+        "type": "query",
+        "datasource": {
+          "type": "postgres",
+          "uid": "cockpit_ref_pg"
+        },
+        "label": "Ano",
+        "query": "SELECT DISTINCT ano FROM dim_periodo ORDER BY ano DESC",
+        "current": {
+          "text": "2026",
+          "value": "2026"
+        },
+        "refresh": 1,
+        "includeAll": false,
+        "multi": false
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Receita Bruta (grupo)",
+      "datasource": {
+        "type": "postgres",
+        "uid": "cockpit_ref_pg"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "cockpit_ref_pg"
+          },
+          "format": "table",
+          "rawSql": "SELECT SUM(f.valor) FROM fato_dre_mensal f JOIN dim_conta c ON c.id=f.conta_id JOIN dim_periodo p ON p.id=f.periodo_id WHERE c.descricao='RECEITA BRUTA' AND p.ano=$ano"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyBRL",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Receita Líquida (grupo)",
+      "datasource": {
+        "type": "postgres",
+        "uid": "cockpit_ref_pg"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "cockpit_ref_pg"
+          },
+          "format": "table",
+          "rawSql": "SELECT SUM(f.valor) FROM fato_dre_mensal f JOIN dim_conta c ON c.id=f.conta_id JOIN dim_periodo p ON p.id=f.periodo_id WHERE c.descricao='RECEITA OPERACIONAL LIQUIDA' AND p.ano=$ano"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyBRL",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "EBIT (grupo)",
+      "datasource": {
+        "type": "postgres",
+        "uid": "cockpit_ref_pg"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "cockpit_ref_pg"
+          },
+          "format": "table",
+          "rawSql": "SELECT SUM(f.valor) FROM fato_dre_mensal f JOIN dim_conta c ON c.id=f.conta_id JOIN dim_periodo p ON p.id=f.periodo_id WHERE c.descricao='RESULTADO OPERACIONAL ANTES DOS IMPOSTOS (EBIT)' AND p.ano=$ano"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyBRL",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Resultado Líquido (grupo)",
+      "datasource": {
+        "type": "postgres",
+        "uid": "cockpit_ref_pg"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "cockpit_ref_pg"
+          },
+          "format": "table",
+          "rawSql": "SELECT SUM(f.valor) FROM fato_dre_mensal f JOIN dim_conta c ON c.id=f.conta_id JOIN dim_periodo p ON p.id=f.periodo_id WHERE c.descricao='RESULTADO LIQUIDO' AND p.ano=$ano"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyBRL",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Evolução histórica — Receita Bruta e EBIT por mês ($empresa · 2018→)",
+      "datasource": {
+        "type": "postgres",
+        "uid": "cockpit_ref_pg"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "cockpit_ref_pg"
+          },
+          "format": "table",
+          "rawSql": "SELECT make_date(p.ano,p.mes,1) AS \"time\",\n  SUM(f.valor) FILTER (WHERE c.descricao='RECEITA BRUTA') AS \"Receita Bruta\",\n  SUM(f.valor) FILTER (WHERE c.descricao='RESULTADO OPERACIONAL ANTES DOS IMPOSTOS (EBIT)') AS \"EBIT\"\nFROM fato_dre_mensal f JOIN dim_conta c ON c.id=f.conta_id\nJOIN dim_periodo p ON p.id=f.periodo_id JOIN dim_empresa e ON e.id=f.empresa_id\nWHERE ('$empresa'='GRUPO' OR e.codigo='$empresa')\nGROUP BY p.ano, p.mes ORDER BY p.ano, p.mes"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyBRL",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "always",
+            "pointSize": 6
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "type": "table",
+      "title": "DRE por Empresa ($empresa · $ano)",
+      "datasource": {
+        "type": "postgres",
+        "uid": "cockpit_ref_pg"
+      },
+      "gridPos": {
+        "h": 11,
+        "w": 12,
+        "x": 0,
+        "y": 13
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "cockpit_ref_pg"
+          },
+          "format": "table",
+          "rawSql": "SELECT c.descricao AS \"Linha\", c.grupo AS \"Grupo\", SUM(f.valor) AS \"Valor (R$)\"\nFROM fato_dre_mensal f JOIN dim_conta c ON c.id=f.conta_id\nJOIN dim_empresa e ON e.id=f.empresa_id JOIN dim_periodo p ON p.id=f.periodo_id\nWHERE ('$empresa'='GRUPO' OR e.codigo='$empresa') AND p.ano=$ano\nGROUP BY c.descricao, c.grupo ORDER BY CASE c.descricao WHEN 'RECEITA BRUTA' THEN 0 WHEN 'DEDUCOES IMPOSTOS' THEN 1 WHEN 'RECEITA OPERACIONAL LIQUIDA' THEN 2 WHEN 'CUSTOS DOS SERVICOS' THEN 3 WHEN 'RESULTADO OPERACIONAL DA AGENCIA' THEN 4 WHEN 'GASTOS COM PESSOAL' THEN 5 WHEN 'INFRAESTRUTURA' THEN 6 WHEN 'OUTRAS DESPESAS' THEN 7 WHEN 'DESPESAS ADMINISTRATIVAS' THEN 8 WHEN 'TRIBUTOS FEDERAIS' THEN 9 WHEN 'RESULTADO OPERACIONAL ANTES DOS IMPOSTOS (EBIT)' THEN 10 WHEN 'RESULTADO LIQUIDO' THEN 11 WHEN 'GERACAO DE CAIXA' THEN 12 ELSE 99 END"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Valor (R$)"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyBRL"
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "green",
+                      "value": 0
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "thresholds"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      }
+    },
+    {
+      "id": 7,
+      "type": "barchart",
+      "title": "Composição de Custos e Despesas ($empresa · $ano)",
+      "datasource": {
+        "type": "postgres",
+        "uid": "cockpit_ref_pg"
+      },
+      "gridPos": {
+        "h": 11,
+        "w": 12,
+        "x": 12,
+        "y": 13
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "cockpit_ref_pg"
+          },
+          "format": "table",
+          "rawSql": "SELECT 'Custos e Despesas' AS \"Categoria\",\n  COALESCE(SUM(f.valor) FILTER (WHERE c.grupo='DIRECT_COST'),0) AS \"Custo Direto\",\n  COALESCE(SUM(f.valor) FILTER (WHERE c.grupo='PERSONNEL'),0)   AS \"Pessoal\",\n  COALESCE(SUM(f.valor) FILTER (WHERE c.grupo='ADMIN'),0)       AS \"Administrativo\",\n  COALESCE(SUM(f.valor) FILTER (WHERE c.grupo='FACILITIES'),0)  AS \"Infraestrutura\",\n  COALESCE(SUM(f.valor) FILTER (WHERE c.grupo='FINANCIAL'),0)   AS \"Financeiro\"\nFROM fato_dre_mensal f JOIN dim_conta c ON c.id=f.conta_id\nJOIN dim_empresa e ON e.id=f.empresa_id JOIN dim_periodo p ON p.id=f.periodo_id\nWHERE ('$empresa'='GRUPO' OR e.codigo='$empresa') AND p.ano=$ano\n  AND c.grupo IN ('DIRECT_COST','PERSONNEL','ADMIN','FACILITIES','FINANCIAL')"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyBRL",
+          "custom": {
+            "fillOpacity": 85,
+            "stacking": {
+              "mode": "normal"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "showValue": "auto",
+        "xTickLabelRotation": 0,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 8,
+      "type": "barchart",
+      "title": "Receita por Cliente — REF ($ano · FEE × Variável)",
+      "datasource": {
+        "type": "postgres",
+        "uid": "cockpit_ref_pg"
+      },
+      "gridPos": {
+        "h": 11,
+        "w": 12,
+        "x": 0,
+        "y": 24
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "cockpit_ref_pg"
+          },
+          "format": "table",
+          "rawSql": "SELECT cl.nome AS \"Cliente\",\n  COALESCE(SUM(r.valor) FILTER (WHERE r.tipo_receita='FEE'),0) AS \"FEE\",\n  COALESCE(SUM(r.valor) FILTER (WHERE r.tipo_receita='VARIAVEL'),0) AS \"Variável\"\nFROM fato_receita_cliente_mensal r JOIN dim_cliente cl ON cl.id=r.cliente_id\nJOIN dim_periodo p ON p.id=r.periodo_id\nWHERE p.ano=$ano\nGROUP BY cl.nome ORDER BY SUM(r.valor) DESC LIMIT 12"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyBRL",
+          "custom": {
+            "fillOpacity": 85,
+            "stacking": {
+              "mode": "normal"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "showValue": "auto",
+        "xTickLabelRotation": 0,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 9,
+      "type": "table",
+      "title": "Margem Real por Projeto (Fase 2 — COR)",
+      "datasource": {
+        "type": "postgres",
+        "uid": "cockpit_ref_pg"
+      },
+      "gridPos": {
+        "h": 11,
+        "w": 12,
+        "x": 12,
+        "y": 24
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "cockpit_ref_pg"
+          },
+          "format": "table",
+          "rawSql": "SELECT projeto AS \"Projeto\", empresa AS \"Empresa\",\n  custo_real_entrega AS \"Custo Real (R$)\", receita_projeto AS \"Receita (R$)\",\n  margem_bruta AS \"Margem (R$)\", round(pct_margem*100,1) AS \"% Margem\"\nFROM vw_margem_projeto ORDER BY 1 LIMIT 50"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Custo Real (R$)"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyBRL"
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "green",
+                      "value": 0
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "thresholds"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Receita (R$)"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyBRL"
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "green",
+                      "value": 0
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "thresholds"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Margem (R$)"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyBRL"
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "green",
+                      "value": 0
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "thresholds"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      }
+    },
+    {
+      "id": 10,
+      "type": "stat",
+      "title": "Última atualização da carga",
+      "datasource": {
+        "type": "postgres",
+        "uid": "cockpit_ref_pg"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 0,
+        "y": 35
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "postgres",
+            "uid": "cockpit_ref_pg"
+          },
+          "format": "table",
+          "rawSql": "SELECT ultima_carga FROM vw_ultima_atualizacao"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "dateTimeAsIso"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "textMode": "value",
+        "colorMode": "none"
+      }
+    },
+    {
+      "id": 11,
+      "type": "text",
+      "title": "",
+      "gridPos": {
+        "h": 4,
+        "w": 16,
+        "x": 8,
+        "y": 35
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "**Cockpit Financeiro REF Group** · dados reais (DRE 2018→2026) · valores negativos em vermelho · Fase 2 (COR / margem real) aguarda token + custo/hora."
+      }
+    }
+  ]
+}
