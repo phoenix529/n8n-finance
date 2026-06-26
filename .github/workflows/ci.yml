@@ -3,10 +3,9 @@ name: CI
 # Portão de qualidade: roda em PRs e pushes. NÃO faz deploy, NÃO usa segredos.
 # Garante que o código compila, a imagem builda e o compose é válido antes de mesclar.
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
+  workflow_call: {}      # chamado como gate pelo deploy.yml em pushes na main
 
 jobs:
   build:
