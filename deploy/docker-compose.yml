@@ -1,34 +1,101 @@
-# docker-compose.yml — n8n + Metabase (Technical Blueprint §4.2/§4.3) para o VPS Ubuntu.
-# PostgreSQL roda no host (apt). Metabase/n8n conectam ao host. Use junto do .env.
-version: "3.8"
+# docker-compose.yml — Cockpit Financeiro Estratégico REF (deploy de produção, VPS Linux).
+# Stack completo e auto-contido. Rode a partir de deploy/ com um arquivo deploy/.env preenchido.
+#
+#   cd /opt/cockpit-ref/deploy && docker compose up -d --build
+#
+# Portas publicadas no host:  80/443 (Caddy -> Grafana, URL do cliente) e 5678 (n8n, operador).
+# db e ia NUNCA são publicados no host — só existem na rede interna do compose.
+name: cockpit-ref
+
 services:
+  db:
+    image: pgvector/pgvector:pg16          # Postgres 16 + extensão vector (RAG)
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      TZ: America/Sao_Paulo
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Init automático no PRIMEIRO boot (banco vazio): extensão + schema estrela.
+      - ./initdb/00_extensions.sql:/docker-entrypoint-initdb.d/00_extensions.sql:ro
+      - ../db/schema_ref.sql:/docker-entrypoint-initdb.d/10_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  ia:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.ia
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DB_HOST: db                          # alcança o Postgres pelo nome do serviço
+      DB_PORT: "5432"
+      IA_PORT: "8500"
+    volumes:
+      # Planilhas confidenciais do cliente: ficam SÓ no servidor, montadas em runtime.
+      - ../data:/opt/cockpit-ref/data
+    depends_on:
+      db:
+        condition: service_healthy
+
   n8n:
     image: docker.n8n.io/n8nio/n8n:latest
     restart: unless-stopped
-    ports: ["5678:5678"]
+    ports: ["5678:5678"]                   # operador (protegido por basic-auth)
     environment:
-      - N8N_BASIC_AUTH_ACTIVE=true
-      - N8N_BASIC_AUTH_USER=${N8N_BASIC_AUTH_USER}
-      - N8N_BASIC_AUTH_PASSWORD=${N8N_BASIC_AUTH_PASSWORD}
-      - GENERIC_TIMEZONE=America/Sao_Paulo
-      - N8N_HOST=${N8N_HOST:-localhost}
-      - WEBHOOK_URL=${N8N_WEBHOOK_URL:-http://localhost:5678/}
+      N8N_BASIC_AUTH_ACTIVE: "true"
+      N8N_BASIC_AUTH_USER: ${N8N_BASIC_AUTH_USER}
+      N8N_BASIC_AUTH_PASSWORD: ${N8N_BASIC_AUTH_PASSWORD}
+      GENERIC_TIMEZONE: America/Sao_Paulo
+      N8N_HOST: ${N8N_HOST:-localhost}
+      N8N_PORT: "5678"
+      N8N_PROTOCOL: ${N8N_PROTOCOL:-http}
+      WEBHOOK_URL: ${N8N_WEBHOOK_URL:-http://localhost:5678/}
+      # Os workflows chamam o runner da IA pela rede interna do compose:
+      IA_BASE_URL: http://ia:8500
     volumes:
       - n8n_data:/home/node/.n8n
-      - ./planilhas:/opt/cockpit-ref/planilhas
-      - ./ingestao:/opt/cockpit-ref/ingestao
-    extra_hosts: ["host.docker.internal:host-gateway"]
-  metabase:
-    image: metabase/metabase:latest
+    depends_on: [ia]
+
+  grafana:
+    image: grafana/grafana:11.4.0
     restart: unless-stopped
-    ports: ["3001:3000"]
+    env_file: .env
     environment:
-      - MB_DB_TYPE=postgres
-      - MB_DB_DBNAME=${DB_NAME}
-      - MB_DB_PORT=${DB_PORT}
-      - MB_DB_USER=${DB_USER}
-      - MB_DB_PASS=${DB_PASSWORD}
-      - MB_DB_HOST=host.docker.internal
-    extra_hosts: ["host.docker.internal:host-gateway"]
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_ADMIN_PASSWORD}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_DEFAULT_THEME: light
+      GF_SERVER_ROOT_URL: ${PUBLIC_URL:-}
+      DB_PASSWORD: ${DB_PASSWORD}           # interpolado no datasource provisionado
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      db:
+        condition: service_healthy
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]            # porta de entrada pública -> Grafana
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-:80}    # ":80" (IP/HTTP) ou "seu-dominio.com" (auto-HTTPS)
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [grafana]
+
 volumes:
+  pgdata:
   n8n_data:
+  grafana_data:
+  caddy_data:
+  caddy_config:

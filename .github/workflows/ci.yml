@@ -1,0 +1,47 @@
+name: CI
+
+# Portão de qualidade: roda em PRs e pushes. NÃO faz deploy, NÃO usa segredos.
+# Garante que o código compila, a imagem builda e o compose é válido antes de mesclar.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps (ia + ingestao)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r ia/requirements.txt -r ingestao/requirements.txt
+
+      - name: Syntax check (compila todos os .py)
+        run: python -m compileall -q ia ingestao rag
+
+      - name: Validate docker-compose
+        working-directory: deploy
+        env:                       # valores fictícios só para o compose validar
+          DB_NAME: cockpit_ref
+          DB_USER: cockpit_user
+          DB_PASSWORD: x
+          N8N_BASIC_AUTH_USER: x
+          N8N_BASIC_AUTH_PASSWORD: x
+          GF_ADMIN_PASSWORD: x
+          ANTHROPIC_API_KEY: x
+          IA_API_KEY: x
+        run: |
+          cp .env.example .env
+          docker compose config >/dev/null
+          echo "compose OK"
+
+      - name: Build da imagem IA
+        run: docker build -f deploy/Dockerfile.ia -t cockpit-ia:ci .
