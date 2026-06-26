@@ -1,0 +1,34 @@
+# docker-compose.yml — n8n + Metabase (Technical Blueprint §4.2/§4.3) para o VPS Ubuntu.
+# PostgreSQL roda no host (apt). Metabase/n8n conectam ao host. Use junto do .env.
+version: "3.8"
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    restart: unless-stopped
+    ports: ["5678:5678"]
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=${N8N_BASIC_AUTH_USER}
+      - N8N_BASIC_AUTH_PASSWORD=${N8N_BASIC_AUTH_PASSWORD}
+      - GENERIC_TIMEZONE=America/Sao_Paulo
+      - N8N_HOST=${N8N_HOST:-localhost}
+      - WEBHOOK_URL=${N8N_WEBHOOK_URL:-http://localhost:5678/}
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./planilhas:/opt/cockpit-ref/planilhas
+      - ./ingestao:/opt/cockpit-ref/ingestao
+    extra_hosts: ["host.docker.internal:host-gateway"]
+  metabase:
+    image: metabase/metabase:latest
+    restart: unless-stopped
+    ports: ["3001:3000"]
+    environment:
+      - MB_DB_TYPE=postgres
+      - MB_DB_DBNAME=${DB_NAME}
+      - MB_DB_PORT=${DB_PORT}
+      - MB_DB_USER=${DB_USER}
+      - MB_DB_PASS=${DB_PASSWORD}
+      - MB_DB_HOST=host.docker.internal
+    extra_hosts: ["host.docker.internal:host-gateway"]
+volumes:
+  n8n_data:

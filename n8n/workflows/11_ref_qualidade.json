@@ -1,0 +1,66 @@
+{
+  "name": "REF — Verificação de Qualidade (Fase 1)",
+  "id": "refQualidade0011",
+  "meta": {},
+  "pinData": {},
+  "nodes": [
+    {
+      "parameters": { "rule": { "interval": [ { "field": "cronExpression", "expression": "30 7 * * *" } ] } },
+      "id": "trigger-0730",
+      "name": "Agendado 07:30 (+30min)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [ 240, 300 ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8501/run/qualidade",
+        "options": { "timeout": 120000 }
+      },
+      "id": "http-quality",
+      "name": "Rodar Checagens (HTTP /run)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [ 480, 300 ],
+      "notes": "Roda validators.py (4 checagens §6.4 + reprodutibilidade §6.5) via HTTP; ok=false quando há alertas (exit 1)."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "typeValidation": "loose" },
+          "conditions": [
+            { "leftValue": "={{ $json.ok }}", "rightValue": false, "operator": { "type": "boolean", "operation": "false", "singleValue": true } }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "if-alerta",
+      "name": "Há alertas? (ok = false)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [ 760, 300 ]
+    },
+    {
+      "parameters": {
+        "assignments": { "assignments": [
+          { "id": "c1", "name": "relatorio", "value": "=Alertas de qualidade detectados:\n{{ $json.stdout || $json.stderr }}", "type": "string" }
+        ] }
+      },
+      "id": "report",
+      "name": "→ Enviar relatório de qualidade",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [ 1020, 240 ],
+      "notes": "Conectar Email Send / Telegram (credenciais do cliente)."
+    }
+  ],
+  "connections": {
+    "Agendado 07:30 (+30min)": { "main": [ [ { "node": "Rodar Checagens (HTTP /run)", "type": "main", "index": 0 } ] ] },
+    "Rodar Checagens (HTTP /run)": { "main": [ [ { "node": "Há alertas? (ok = false)", "type": "main", "index": 0 } ] ] },
+    "Há alertas? (ok = false)": { "main": [ [ { "node": "→ Enviar relatório de qualidade", "type": "main", "index": 0 } ], [] ] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "active": false,
+  "tags": [ { "name": "cockpit-ref" } ]
+}

@@ -1,0 +1,87 @@
+{
+  "name": "REF — Integração COR (Fase 2) [esqueleto]",
+  "id": "refCorFase200012",
+  "meta": {},
+  "pinData": {},
+  "nodes": [
+    {
+      "parameters": { "rule": { "interval": [ { "field": "cronExpression", "expression": "0 8 * * *" } ] } },
+      "id": "trigger-cor",
+      "name": "Agendado 08:00 (após ingestão)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [ 240, 300 ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.COR_BASE_URL }}/projects",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "http-projects",
+      "name": "GET /projects (Bearer)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [ 480, 300 ],
+      "notes": "Credencial Header Auth: Authorization = Bearer <COR_API_TOKEN> (cliente)."
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.COR_BASE_URL }}/time-entries",
+        "sendQuery": true,
+        "queryParameters": { "parameters": [ { "name": "from", "value": "={{ $now.minus({days:30}).toISODate() }}" }, { "name": "to", "value": "={{ $now.toISODate() }}" } ] },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {}
+      },
+      "id": "http-time",
+      "name": "GET /time-entries (30d)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [ 720, 300 ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8501/run/cor",
+        "options": { "timeout": 300000 }
+      },
+      "id": "http-cor",
+      "name": "Carregar COR (HTTP /run/cor)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [ 960, 300 ],
+      "notes": "Roda cor_loader.py via HTTP. Requer COR_API_TOKEN no .env + dim_custo_hora_colaborador. Calcula vw_margem_projeto."
+    },
+    {
+      "parameters": {
+        "conditions": { "options": { "typeValidation": "loose" }, "combinator": "and",
+          "conditions": [ { "leftValue": "={{ $json.ok }}", "rightValue": false, "operator": { "type": "boolean", "operation": "false", "singleValue": true } } ] }
+      },
+      "id": "if-cor",
+      "name": "Erro? (ok = false)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [ 1200, 300 ]
+    },
+    {
+      "parameters": { "assignments": { "assignments": [ { "id": "z1", "name": "alerta", "value": "=Falha/bloqueio COR: {{ $json.stderr || $json.stdout }}", "type": "string" } ] } },
+      "id": "cor-alert",
+      "name": "→ Alertar (e-mail/Telegram)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [ 1440, 240 ]
+    }
+  ],
+  "connections": {
+    "Agendado 08:00 (após ingestão)": { "main": [ [ { "node": "GET /projects (Bearer)", "type": "main", "index": 0 } ] ] },
+    "GET /projects (Bearer)": { "main": [ [ { "node": "GET /time-entries (30d)", "type": "main", "index": 0 } ] ] },
+    "GET /time-entries (30d)": { "main": [ [ { "node": "Carregar COR (HTTP /run/cor)", "type": "main", "index": 0 } ] ] },
+    "Carregar COR (HTTP /run/cor)": { "main": [ [ { "node": "Erro? (ok = false)", "type": "main", "index": 0 } ] ] },
+    "Erro? (ok = false)": { "main": [ [ { "node": "→ Alertar (e-mail/Telegram)", "type": "main", "index": 0 } ], [] ] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "active": false,
+  "tags": [ { "name": "cockpit-ref" }, { "name": "fase2" } ]
+}

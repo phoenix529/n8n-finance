@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Adicionar planilha · Cockpit Financeiro</title>
+<style>
+  :root{
+    --navy:#0B1F3A; --indigo:#4F6BED; --ink:#10182B; --muted:#6B7280;
+    --surface:#fff; --canvas:#F6F8FC; --line:#E6EAF2; --pos:#10B981; --neg:#EF4444; --warn:#F59E0B;
+  }
+  *{box-sizing:border-box} html,body{margin:0}
+  body{font-family:Inter,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--canvas);color:var(--ink);}
+  .wrap{max-width:720px;margin:0 auto;padding:28px 18px 60px}
+  .brand{display:flex;align-items:center;gap:12px;margin-bottom:22px}
+  .logo{width:42px;height:42px;border-radius:11px;background:linear-gradient(135deg,var(--navy),var(--indigo));
+        display:grid;place-items:center;color:#fff;font-weight:800}
+  .brand h1{font-size:18px;margin:0;line-height:1.1}
+  .brand p{font-size:12.5px;color:var(--muted);margin:2px 0 0}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:16px;
+        box-shadow:0 1px 2px rgba(16,24,43,.04),0 8px 24px rgba(16,24,43,.05);padding:22px;margin-bottom:18px}
+  h2{font-size:16px;margin:0 0 6px} .sub{color:var(--muted);font-size:13px;margin:0 0 16px}
+  .drop{display:block;border:2px dashed #c8d2ea;border-radius:14px;padding:26px;text-align:center;cursor:pointer;
+        transition:.15s;background:#fbfcff}
+  .btn{display:block;width:100%}
+  .drop.drag{border-color:var(--indigo);background:#eef2ff}
+  .drop b{color:var(--indigo)} .drop small{display:block;color:var(--muted);margin-top:6px;font-size:12px}
+  input[type=file]{display:none}
+  .file-line{display:none;align-items:center;justify-content:space-between;gap:12px;margin-top:14px;
+        background:var(--canvas);border:1px solid var(--line);border-radius:10px;padding:10px 14px;font-size:13.5px}
+  .btn{appearance:none;border:0;border-radius:10px;background:var(--indigo);color:#fff;font-weight:700;
+       font-size:14px;padding:11px 20px;cursor:pointer;margin-top:16px}
+  .btn[disabled]{opacity:.5;cursor:not-allowed}
+  table{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:8px}
+  th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line)} th{color:var(--muted);font-weight:600}
+  code{background:var(--canvas);border:1px solid var(--line);border-radius:5px;padding:1px 5px;font-size:12px}
+  #result{display:none;margin-top:4px}
+  .badge{display:inline-flex;align-items:center;gap:6px;font-weight:700;font-size:12.5px;border-radius:999px;padding:4px 11px}
+  .b-ok{background:#e9f9f1;color:#0a7a4f} .b-part{background:#fff5e6;color:#9a6400} .b-err{background:#fdeaea;color:#a62121}
+  .res-row{display:flex;gap:18px;flex-wrap:wrap;margin:10px 0}
+  .res-row div{font-size:13px}.res-row b{font-size:20px;display:block}
+  ul.reasons{margin:8px 0 0;padding-left:18px;color:var(--neg);font-size:12.5px}
+  a.back{display:inline-block;margin-top:8px;color:var(--indigo);text-decoration:none;font-weight:600;font-size:13px}
+  .spin{width:16px;height:16px;border:2px solid #fff;border-top-color:transparent;border-radius:50%;
+        display:inline-block;vertical-align:-3px;margin-right:8px;animation:s .7s linear infinite}
+  @keyframes s{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand">
+    <span class="logo">R</span>
+    <div><h1>Ref Comunicação — Adicionar planilha</h1><p>Ingestão Fase 1 · validação · quarentena</p></div>
+  </div>
+
+  <div class="card">
+    <h2>Enviar planilha financeira (Excel)</h2>
+    <p class="sub">Selecione um arquivo <b>.xlsx</b> (ou .csv). Ele é validado, as linhas boas vão para a
+      base consolidada e as inválidas para a quarentena — com o motivo de cada rejeição.</p>
+
+    <label class="drop" id="drop">
+      <b>Clique para escolher</b> ou arraste o arquivo aqui
+      <small>.xlsx / .csv · até 15 MB</small>
+      <input type="file" id="file" accept=".xlsx,.csv" />
+    </label>
+    <div class="file-line" id="fileLine"><span id="fileName"></span><span id="fileSize" style="color:var(--muted)"></span></div>
+
+    <button class="btn" id="send" disabled>Enviar e processar</button>
+
+    <div id="result"></div>
+  </div>
+
+  <div class="card">
+    <h2>Formato esperado</h2>
+    <p class="sub">A primeira linha é o cabeçalho. Colunas:</p>
+    <table>
+      <tr><th>empresa</th><th>periodo</th><th>conta_codigo</th><th>conta_nome</th><th>valor_realizado</th><th>valor_orcado</th></tr>
+      <tr><td>Aurora Varejo S.A.</td><td>2026-06</td><td>R_BRUTA</td><td>Receita Bruta de Vendas</td><td>20569561.37</td><td>19970447.93</td></tr>
+    </table>
+    <p class="sub" style="margin-top:12px">Regras: <code>periodo</code> no formato <code>AAAA-MM</code>;
+      <code>conta_codigo</code> deve existir no plano de contas; <code>empresa</code> deve pertencer ao grupo;
+      valores numéricos. Linhas que violam qualquer regra vão para a quarentena.</p>
+    <a class="back" href="./index.html">← Voltar ao cockpit</a>
+  </div>
+</div>
+
+<script>
+(function(){
+  var file=document.getElementById('file'), drop=document.getElementById('drop'),
+      send=document.getElementById('send'), result=document.getElementById('result'),
+      fileLine=document.getElementById('fileLine'), fileName=document.getElementById('fileName'),
+      fileSize=document.getElementById('fileSize'), chosen=null;
+  function human(b){return b>1048576?(b/1048576).toFixed(1)+' MB':(b/1024).toFixed(0)+' KB';}
+  function pick(f){ if(!f) return; chosen=f; fileName.textContent=f.name; fileSize.textContent=human(f.size);
+    fileLine.style.display='flex'; send.disabled=false; result.style.display='none'; }
+  file.addEventListener('change',function(){pick(file.files[0]);});
+  ['dragover','dragenter'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.add('drag');}));
+  ['dragleave','drop'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.remove('drag');}));
+  drop.addEventListener('drop',ev=>{ if(ev.dataTransfer.files[0]) pick(ev.dataTransfer.files[0]); });
+
+  send.addEventListener('click',function(){
+    if(!chosen) return;
+    send.disabled=true; send.innerHTML='<span class="spin"></span>Processando…';
+    result.style.display='none';
+    var fd=new FormData(); fd.append('file',chosen,chosen.name);
+    fetch('/upload',{method:'POST',body:fd}).then(r=>r.json()).then(function(j){
+      var badge, cls;
+      if(!j.ok){ cls='b-err'; badge='falha'; }
+      else if((j.rows_quarantined||0)>0){ cls='b-part'; badge='parcial'; }
+      else { cls='b-ok'; badge='ok'; }
+      var reasons = (j.reasons&&j.reasons.length)
+        ? '<ul class="reasons">'+j.reasons.map(x=>'<li>'+escapeHtml(x)+'</li>').join('')+'</ul>' : '';
+      result.innerHTML =
+        '<div style="margin-top:14px"><span class="badge '+cls+'">'+badge+'</span></div>'+
+        (j.error ? '<p style="color:var(--neg);margin:10px 0 0">'+escapeHtml(j.error)+'</p>' :
+          '<div class="res-row">'+
+            '<div><b>'+(j.rows_ok!=null?j.rows_ok:'–')+'</b>linhas carregadas</div>'+
+            '<div><b style="color:var(--neg)">'+(j.rows_quarantined!=null?j.rows_quarantined:'–')+'</b>em quarentena</div>'+
+            '<div><b>'+(j.rows_total!=null?j.rows_total:'–')+'</b>total no arquivo</div>'+
+          '</div>'+
+          '<p class="sub" style="margin:6px 0 0">Arquivo: <code>'+escapeHtml(j.file||'')+'</code> · run <code>'+escapeHtml(j.status||'')+'</code></p>'+
+          reasons);
+      result.style.display='block';
+    }).catch(function(e){
+      result.innerHTML='<p style="color:var(--neg);margin-top:14px">Erro de rede: '+escapeHtml(String(e))+'</p>';
+      result.style.display='block';
+    }).finally(function(){ send.disabled=false; send.textContent='Enviar e processar'; });
+  });
+  function escapeHtml(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,539 @@
+{
+  "name": "03 - RAG Consulta (Cockpit Financeiro)",
+  "nodes": [
+    {
+      "id": "c3d4e5f6-0001-4c03-9003-000000000001",
+      "name": "Webhook /cockpit-ask",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -1340,
+        400
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "cockpit-ask",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "notes": "Recebe POST em /webhook/cockpit-ask. Body esperado: { \"question\": \"...\", \"user_role\": \"cockpit_executive\", \"top_k\": 6 }. A resposta é devolvida pelo nó 'Responder ao Webhook'."
+    },
+    {
+      "id": "c3d4e5f6-0002-4c03-9003-000000000002",
+      "name": "Validar Entrada",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1120,
+        400
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "// Valida e normaliza o corpo da requisição. Captura o tempo inicial para latency_ms.\nconst body = $json.body || $json;\nconst question = (body.question || '').toString().trim();\nif (!question) {\n  throw new Error('Campo obrigatório ausente: \"question\".');\n}\nconst userRole = (body.user_role || 'cockpit_executive').toString().trim();\nlet topK = parseInt(body.top_k, 10);\nif (!Number.isFinite(topK) || topK < 1 || topK > 20) topK = 6;\n\nreturn {\n  json: {\n    question,\n    user_role: userRole,\n    top_k: topK,\n    embed_model: $env.EMBED_MODEL || 'text-embedding-3-small',\n    llm_model: $env.LLM_MODEL || 'claude-opus-4-8',\n    started_ms: Date.now(),\n  },\n};"
+      },
+      "notes": "Valida 'question' (obrigatório), aplica defaults de user_role e top_k, e captura started_ms para medir a latência."
+    },
+    {
+      "id": "c3d4e5f6-0003-4c03-9003-000000000003",
+      "name": "Embeddar Pergunta (HTTP)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -900,
+        400
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.EMBED_ENDPOINT || 'https://api.openai.com/v1/embeddings' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: $json.embed_model, input: $json.question }) }}",
+        "options": {
+          "timeout": 20000,
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "EMBEDDINGS_API",
+          "name": "Embeddings API (header auth)"
+        }
+      },
+      "onError": "stopWorkflow",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "notes": "Embedda a pergunta no mesmo modelo (EMBED_MODEL) usado para indexar os documentos. Endpoint via EMBED_ENDPOINT. RETRY 3x/3s."
+    },
+    {
+      "id": "c3d4e5f6-0004-4c03-9003-000000000004",
+      "name": "Preparar Vetor da Consulta",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -680,
+        400
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "// Extrai o vetor da resposta de embeddings e formata como literal pgvector para a busca.\nconst resp = $json;\nlet vector = null;\nif (resp && Array.isArray(resp.data) && resp.data[0] && Array.isArray(resp.data[0].embedding)) {\n  vector = resp.data[0].embedding;\n} else if (Array.isArray(resp.embedding)) {\n  vector = resp.embedding;\n}\nif (!vector || vector.length === 0) {\n  throw new Error('Não foi possível obter o embedding da pergunta.');\n}\n\nconst meta = $('Validar Entrada').item.json;\nreturn {\n  json: {\n    question: meta.question,\n    user_role: meta.user_role,\n    top_k: meta.top_k,\n    llm_model: meta.llm_model,\n    started_ms: meta.started_ms,\n    query_vector: '[' + vector.map((x) => Number(x)).join(',') + ']',\n  },\n};"
+      },
+      "notes": "Converte o embedding da pergunta para o literal pgvector e propaga metadados (question, user_role, top_k, started_ms)."
+    },
+    {
+      "id": "c3d4e5f6-0005-4c03-9003-000000000005",
+      "name": "Busca Vetorial (top-k cosseno)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -460,
+        400
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Busca semântica top-k por similaridade de cosseno (pgvector, operador <=>).\n-- Respeita o RBAC: executivos só veem empresas em user_company_access; admin/analyst/auditor veem tudo.\nSELECT\n  d.id              AS doc_id,\n  d.doc_type,\n  d.company_id,\n  to_char(d.period_date, 'YYYY-MM') AS periodo,\n  d.title,\n  d.content,\n  (1 - (e.embedding <=> $1::vector)) AS similaridade\nFROM cockpit.kb_embeddings e\nJOIN cockpit.kb_documents d ON d.id = e.doc_id\nWHERE\n  $2 IN ('cockpit_admin', 'cockpit_analyst', 'cockpit_auditor')\n  OR d.company_id IS NULL\n  OR d.company_id IN (\n    SELECT company_id FROM cockpit.user_company_access WHERE role_name = $2\n  )\nORDER BY e.embedding <=> $1::vector\nLIMIT $3::int;",
+        "options": {
+          "queryReplacement": "={{ $json.query_vector }},{{ $json.user_role }},{{ $json.top_k }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_COCKPIT",
+          "name": "Postgres Cockpit"
+        }
+      },
+      "onError": "stopWorkflow",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "notes": "Busca top-k em cockpit.kb_embeddings por cosseno (<=>). Aplica RBAC via user_company_access (executivos escopados). RETRY 3x/3s."
+    },
+    {
+      "id": "c3d4e5f6-0006-4c03-9003-000000000006",
+      "name": "Montar Prompt Ancorado",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -240,
+        400
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Constrói o prompt 'grounded' (ancorado) a partir dos documentos recuperados.\n// O modelo só pode responder com base nas fontes; caso contrário, declara não saber.\nconst meta = $('Preparar Vetor da Consulta').first().json;\nconst rows = $input.all().map((i) => i.json);\n\nconst retrievedDocIds = rows.map((r) => r.doc_id);\nconst fontes = rows.map((r) => `${r.title} (${r.periodo || 's/ período'})`);\n\nconst contexto = rows.length === 0\n  ? '(Nenhum documento relevante encontrado na base de conhecimento.)'\n  : rows.map((r, idx) =>\n      `[FONTE ${idx + 1} | ${r.company_id || 'CONSOLIDADO'} | ${r.periodo || 's/ período'} | similaridade ${Number(r.similaridade).toFixed(3)}]\\n${r.content}`\n    ).join('\\n\\n');\n\nconst systemPrompt =\n  'Você é o assistente analítico do Cockpit Financeiro Estratégico do Grupo Aurora. ' +\n  'Responda SEMPRE em português do Brasil, de forma objetiva e executiva. ' +\n  'Use EXCLUSIVAMENTE as informações das FONTES fornecidas abaixo. ' +\n  'Não invente números nem extrapole além do contexto. ' +\n  'Se as fontes não contiverem a resposta, diga claramente que a informação não está disponível na base. ' +\n  'Valores monetários estão em BRL (R$). Cite as fontes relevantes ao final.';\n\nconst userPrompt =\n  `PERGUNTA DO USUÁRIO:\\n${meta.question}\\n\\n` +\n  `FONTES RECUPERADAS DA BASE DE CONHECIMENTO:\\n${contexto}\\n\\n` +\n  'Com base apenas nas fontes acima, responda à pergunta.';\n\nreturn [{\n  json: {\n    question: meta.question,\n    user_role: meta.user_role,\n    llm_model: meta.llm_model,\n    started_ms: meta.started_ms,\n    retrieved_doc_ids: retrievedDocIds,\n    fontes,\n    system_prompt: systemPrompt,\n    user_prompt: userPrompt,\n  },\n}];"
+      },
+      "notes": "Monta o prompt ancorado (system + user) com as fontes top-k. Instrui o modelo a não inventar e a citar fontes. Coleta retrieved_doc_ids para auditoria."
+    },
+    {
+      "id": "c3d4e5f6-0007-4c03-9003-000000000007",
+      "name": "Claude /v1/messages (HTTP)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -20,
+        400
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: $json.llm_model, max_tokens: 1024, system: $json.system_prompt, messages: [ { role: 'user', content: $json.user_prompt } ] }) }}",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "ANTHROPIC_API",
+          "name": "Anthropic API (x-api-key)"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 4000,
+      "notes": "Chama a API Anthropic Claude (/v1/messages). Modelo via LLM_MODEL (default claude-opus-4-8). Auth: credencial httpHeaderAuth com header x-api-key. RETRY 3x/4s. Erros vão à saída de erro."
+    },
+    {
+      "id": "c3d4e5f6-0008-4c03-9003-000000000008",
+      "name": "Extrair Resposta + Métricas",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        200,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "// Extrai o texto da resposta da API Anthropic e as métricas de tokens/latência.\nconst meta = $('Montar Prompt Ancorado').item.json;\nconst resp = $json;\n\n// Resposta Anthropic: { content: [ { type: 'text', text: '...' } ], usage: { input_tokens, output_tokens }, model }\nlet answer = '';\nif (resp && Array.isArray(resp.content)) {\n  answer = resp.content\n    .filter((b) => b && b.type === 'text' && typeof b.text === 'string')\n    .map((b) => b.text)\n    .join('\\n')\n    .trim();\n}\nif (!answer) {\n  answer = 'Não foi possível gerar uma resposta a partir das fontes disponíveis.';\n}\n\nconst usage = (resp && resp.usage) || {};\nconst latencyMs = Date.now() - Number(meta.started_ms || Date.now());\n\nreturn {\n  json: {\n    question: meta.question,\n    user_role: meta.user_role,\n    model: (resp && resp.model) || meta.llm_model,\n    answer,\n    fontes: meta.fontes,\n    retrieved_doc_ids: meta.retrieved_doc_ids,\n    prompt_tokens: usage.input_tokens != null ? usage.input_tokens : 0,\n    completion_tokens: usage.output_tokens != null ? usage.output_tokens : 0,\n    latency_ms: latencyMs,\n  },\n};"
+      },
+      "notes": "Lê content[].text da resposta Anthropic, calcula latency_ms e captura prompt/completion tokens de usage."
+    },
+    {
+      "id": "c3d4e5f6-0009-4c03-9003-000000000009",
+      "name": "Gravar ai_query_audit",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        420,
+        300
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Trilha de auditoria de cada pergunta respondida pela IA (governança/LGPD).\nINSERT INTO cockpit.ai_query_audit\n  (user_role, question, retrieved_doc_ids, answer, model, prompt_tokens, completion_tokens, latency_ms, created_at)\nVALUES\n  ($1, $2, $3::int[], $4, $5, $6::int, $7::int, $8::int, now());",
+        "options": {
+          "queryReplacement": "={{ $json.user_role }},{{ $json.question }},{{ '{' + ($json.retrieved_doc_ids || []).join(',') + '}' }},{{ $json.answer }},{{ $json.model }},{{ $json.prompt_tokens }},{{ $json.completion_tokens }},{{ $json.latency_ms }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_COCKPIT",
+          "name": "Postgres Cockpit"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "notes": "Registra a consulta em cockpit.ai_query_audit (role, pergunta, doc_ids recuperados, resposta, modelo, tokens, latência). RETRY 3x/3s."
+    },
+    {
+      "id": "c3d4e5f6-0010-4c03-9003-000000000010",
+      "name": "Responder ao Webhook (sucesso)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        640,
+        300
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, answer: $json.answer, sources: $json.fontes, model: $json.model, latency_ms: $json.latency_ms, usage: { prompt_tokens: $json.prompt_tokens, completion_tokens: $json.completion_tokens } }) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json; charset=utf-8"
+              }
+            ]
+          }
+        }
+      },
+      "notes": "Devolve ao chamador a resposta + fontes (sources) + modelo + métricas, em JSON (HTTP 200)."
+    },
+    {
+      "id": "c3d4e5f6-0011-4c03-9003-000000000011",
+      "name": "Montar Resposta de Erro",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        200,
+        560
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "language": "javaScript",
+        "jsCode": "// Caminho de erro da chamada ao Claude: monta uma resposta amigável e dados para auditoria.\nconst meta = $('Montar Prompt Ancorado').first().json;\nconst errMsg = ($json.error && $json.error.message) || $json.message || 'Falha ao consultar o modelo de IA.';\nconst latencyMs = Date.now() - Number(meta.started_ms || Date.now());\nreturn {\n  json: {\n    user_role: meta.user_role,\n    question: meta.question,\n    model: meta.llm_model,\n    answer: 'Desculpe, ocorreu um erro ao consultar o assistente de IA. Tente novamente em instantes.',\n    error_message: errMsg,\n    retrieved_doc_ids: meta.retrieved_doc_ids,\n    fontes: meta.fontes,\n    prompt_tokens: 0,\n    completion_tokens: 0,\n    latency_ms: latencyMs,\n  },\n};"
+      },
+      "notes": "Normaliza o erro do HTTP do Claude em uma resposta de fallback (PT-BR) e prepara o registro de auditoria."
+    },
+    {
+      "id": "c3d4e5f6-0012-4c03-9003-000000000012",
+      "name": "Gravar ai_query_audit (erro)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        420,
+        560
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO cockpit.ai_query_audit\n  (user_role, question, retrieved_doc_ids, answer, model, prompt_tokens, completion_tokens, latency_ms, created_at)\nVALUES\n  ($1, $2, $3::int[], $4, $5, 0, 0, $6::int, now());",
+        "options": {
+          "queryReplacement": "={{ $json.user_role }},{{ $json.question }},{{ '{' + ($json.retrieved_doc_ids || []).join(',') + '}' }},{{ '[ERRO] ' + $json.error_message }},{{ $json.model }},{{ $json.latency_ms }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "POSTGRES_COCKPIT",
+          "name": "Postgres Cockpit"
+        }
+      },
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "notes": "Audita também as falhas (resposta prefixada com [ERRO]). RETRY 2x/3s."
+    },
+    {
+      "id": "c3d4e5f6-0013-4c03-9003-000000000013",
+      "name": "Responder ao Webhook (erro)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        640,
+        560
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: false, answer: $json.answer, error: $json.error_message, model: $json.model, latency_ms: $json.latency_ms }) }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json; charset=utf-8"
+              }
+            ]
+          }
+        }
+      },
+      "notes": "Devolve a resposta de fallback ao chamador mesmo em caso de erro do modelo (HTTP 200 com ok:false)."
+    },
+    {
+      "id": "note-03-0001",
+      "name": "Nota: Entrada & Embedding",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -1380,
+        120
+      ],
+      "parameters": {
+        "width": 540,
+        "height": 240,
+        "color": 4,
+        "content": "## 1 · Entrada & Embedding da Pergunta\n\n**POST** `/webhook/cockpit-ask` com:\n```json\n{ \"question\": \"Qual o EBITDA consolidado do último mês?\",\n  \"user_role\": \"cockpit_executive\",\n  \"top_k\": 6 }\n```\n\nA pergunta é validada e **embeddada** no mesmo `EMBED_MODEL` usado na indexação (dim 1536). `started_ms` é capturado para medir a latência."
+      }
+    },
+    {
+      "id": "note-03-0002",
+      "name": "Nota: Busca & Prompt",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -500,
+        100
+      ],
+      "parameters": {
+        "width": 480,
+        "height": 240,
+        "color": 5,
+        "content": "## 2 · Busca Vetorial & Prompt Ancorado\n\n**Top-k por cosseno** (`<=>`) em `kb_embeddings`, com **RBAC** via `user_company_access` (executivos escopados a um subconjunto de empresas).\n\nO **prompt ancorado** injeta apenas as FONTES recuperadas e instrui o modelo a **não inventar** e a citar fontes."
+      }
+    },
+    {
+      "id": "note-03-0003",
+      "name": "Nota: Claude & Auditoria",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        80
+      ],
+      "parameters": {
+        "width": 520,
+        "height": 200,
+        "color": 6,
+        "content": "## 3 · Claude & Auditoria\n\nChamada a **`api.anthropic.com/v1/messages`** (modelo `LLM_MODEL`, default **claude-opus-4-8**), auth `x-api-key` via credencial.\n\nA pergunta, fontes, resposta, tokens e latência são gravados em **`ai_query_audit`** (governança/LGPD)."
+      }
+    },
+    {
+      "id": "note-03-0004",
+      "name": "Nota: Resposta & Erro",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        600,
+        80
+      ],
+      "parameters": {
+        "width": 460,
+        "height": 200,
+        "color": 3,
+        "content": "## 4 · Resposta & Caminho de Erro\n\nO **Respond to Webhook** devolve `{ answer, sources, model, usage, latency_ms }`.\n\nSe a chamada ao Claude falhar (saída de erro do HTTP), um **fallback em PT-BR** é devolvido com `ok:false` e a falha também é auditada em `ai_query_audit`."
+      }
+    }
+  ],
+  "connections": {
+    "Webhook /cockpit-ask": {
+      "main": [
+        [
+          {
+            "node": "Validar Entrada",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar Entrada": {
+      "main": [
+        [
+          {
+            "node": "Embeddar Pergunta (HTTP)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddar Pergunta (HTTP)": {
+      "main": [
+        [
+          {
+            "node": "Preparar Vetor da Consulta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Vetor da Consulta": {
+      "main": [
+        [
+          {
+            "node": "Busca Vetorial (top-k cosseno)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Busca Vetorial (top-k cosseno)": {
+      "main": [
+        [
+          {
+            "node": "Montar Prompt Ancorado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Montar Prompt Ancorado": {
+      "main": [
+        [
+          {
+            "node": "Claude /v1/messages (HTTP)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude /v1/messages (HTTP)": {
+      "main": [
+        [
+          {
+            "node": "Extrair Resposta + Métricas",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Montar Resposta de Erro",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extrair Resposta + Métricas": {
+      "main": [
+        [
+          {
+            "node": "Gravar ai_query_audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gravar ai_query_audit": {
+      "main": [
+        [
+          {
+            "node": "Responder ao Webhook (sucesso)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Montar Resposta de Erro": {
+      "main": [
+        [
+          {
+            "node": "Gravar ai_query_audit (erro)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gravar ai_query_audit (erro)": {
+      "main": [
+        [
+          {
+            "node": "Responder ao Webhook (erro)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "timezone": "America/Sao_Paulo"
+  },
+  "active": false
+}
