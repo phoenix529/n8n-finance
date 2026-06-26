@@ -1,0 +1,8 @@
+# Caddyfile — proxy reverso na frente do Grafana (URL do cliente).
+# SITE_ADDRESS vem do .env:
+#   ":80"            -> acesso por IP, HTTP simples (ex.: http://76.13.172.100)
+#   "cockpit.seu-dominio.com" -> Caddy emite TLS automático (HTTPS) via Let's Encrypt.
+{$SITE_ADDRESS} {
+	encode gzip
+	reverse_proxy grafana:3000
+}

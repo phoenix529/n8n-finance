@@ -1,0 +1,19 @@
+apiVersion: 1
+# Datasource provisionado para o deploy em container. SEM segredo no arquivo:
+# a senha vem da variável de ambiente DB_PASSWORD (passada ao container grafana).
+datasources:
+  - name: CockpitREF
+    type: postgres
+    uid: cockpit_ref_pg
+    access: proxy
+    url: db:5432                 # nome do serviço Postgres na rede do compose
+    database: cockpit_ref
+    user: cockpit_user
+    secureJsonData:
+      password: ${DB_PASSWORD}
+    jsonData:
+      sslmode: disable
+      postgresVersion: 1600
+      timescaledb: false
+    isDefault: true
+    editable: false

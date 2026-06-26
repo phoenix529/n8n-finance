@@ -1,0 +1,31 @@
+# Dockerfile.ia — serviço FastAPI de IA consultiva + runner de ingestão (Blueprint §7.4).
+# Empacota ia/ + ingestao/ + db/ (sem segredos: tudo via variáveis de ambiente).
+FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    TZ=America/Sao_Paulo
+
+WORKDIR /opt/cockpit-ref
+
+# Dependências de sistema mínimas para psycopg2-binary/pandas já vêm no slim.
+# Instala primeiro os requirements (camada cacheável).
+COPY ia/requirements.txt        ia/requirements.txt
+COPY ingestao/requirements.txt  ingestao/requirements.txt
+RUN pip install -r ia/requirements.txt -r ingestao/requirements.txt
+
+# Código da aplicação (dados confidenciais .xlsx NÃO entram na imagem — vêm por volume).
+COPY ia/        ia/
+COPY ingestao/  ingestao/
+COPY db/        db/
+
+# Usuário sem privilégios.
+RUN useradd --create-home --uid 10001 appuser && chown -R appuser /opt/cockpit-ref
+USER appuser
+
+EXPOSE 8500
+WORKDIR /opt/cockpit-ref/ia
+# Dentro do container escuta em 0.0.0.0 (a rede do compose é isolada; só o Caddy/n8n
+# alcançam este serviço — nenhuma porta é publicada no host).
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8500"]

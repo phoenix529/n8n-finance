@@ -1,0 +1,41 @@
+name: Deploy
+
+# Implanta no VPS a cada push na main (após o CI passar).
+# Conecta por SSH com CHAVE (nunca senha) e roda deploy/deploy.sh no servidor.
+#
+# Secrets necessários (Settings > Secrets and variables > Actions) — VOCÊ preenche:
+#   DEPLOY_HOST     -> 76.13.172.100
+#   DEPLOY_USER     -> deploy
+#   DEPLOY_SSH_KEY  -> chave PRIVADA do par cujo .pub está no authorized_keys do servidor
+#   DEPLOY_PORT     -> 22  (opcional)
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}        # permite disparo manual pela aba Actions
+
+concurrency:
+  group: deploy-production      # nunca dois deploys simultâneos
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    needs: ci                   # só implanta se o CI passou
+    # Trava de segurança: o deploy só roda depois que você criar a Actions Variable
+    # DEPLOY_ENABLED=true (Settings > Secrets and variables > Actions > Variables).
+    # Assim o primeiro push não falha por falta de secrets.
+    if: ${{ vars.DEPLOY_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ secrets.DEPLOY_PORT || 22 }}
+          script_stop: true
+          command_timeout: 20m
+          script: bash /opt/cockpit-ref/deploy/deploy.sh

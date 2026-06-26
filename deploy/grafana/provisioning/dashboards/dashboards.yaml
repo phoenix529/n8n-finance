@@ -1,0 +1,11 @@
+apiVersion: 1
+# Carrega os dashboards versionados (montados em /var/lib/grafana/dashboards).
+providers:
+  - name: CockpitREF
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

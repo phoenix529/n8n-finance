@@ -2,6 +2,7 @@
 .env
 rag/.env
 ia/.env
+deploy/.env
 grafana/provisioning/datasources/cockpit_ref.yaml
 
 # --- Dados CONFIDENCIAIS do cliente (NAO versionar) ---
