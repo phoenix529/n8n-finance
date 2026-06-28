@@ -30,7 +30,7 @@ $bind = (Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction Silentl
 $ip = (Invoke-RestMethod -Uri 'https://api.ipify.org' -TimeoutSec 8 -ErrorAction SilentlyContinue)
 ""
 "Grafana reiniciado. bind=$bind (esperado 0.0.0.0)."
-"Acesse:  http://$ip:3000/d/cockpit-ref   (login: cliente / [redacted])"
+"Acesse:  http://$ip:3000/d/cockpit-ref   (login do Grafana: veja conf/custom.ini, nao versionado)"
 ""
 "IMPORTANTE: se o servidor tiver firewall do PROVEDOR de nuvem (security group),"
 "libere a porta 3000 inbound lá também. E como é HTTP (sem criptografia), prefira"
