@@ -13,26 +13,24 @@ REPO_URL="${REPO_URL:-https://github.com/phoenix529/n8n-finance.git}"
 APP_DIR="/opt/cockpit-ref"
 DEPLOY_USER="deploy"
 
-echo "==> 1/6  Pacotes base"
+echo "==> 1/6  Pacotes base (+ fail2ban: protege o login por senha contra brute-force)"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
-apt-get install -y ca-certificates curl git ufw
+apt-get install -y ca-certificates curl git ufw fail2ban
+systemctl enable --now fail2ban 2>/dev/null || true
 
 echo "==> 2/6  Docker Engine + Compose plugin (script oficial)"
 if ! command -v docker >/dev/null 2>&1; then
   curl -fsSL https://get.docker.com | sh
 fi
 
-echo "==> 3/6  Usuário '$DEPLOY_USER' (sem senha; só chave SSH)"
+echo "==> 3/6  Usuário '$DEPLOY_USER' (não-root, no grupo docker)"
 if ! id "$DEPLOY_USER" >/dev/null 2>&1; then
   useradd --create-home --shell /bin/bash "$DEPLOY_USER"
 fi
 usermod -aG docker "$DEPLOY_USER"
-install -d -m 700 -o "$DEPLOY_USER" -g "$DEPLOY_USER" "/home/$DEPLOY_USER/.ssh"
-touch "/home/$DEPLOY_USER/.ssh/authorized_keys"
-chown "$DEPLOY_USER:$DEPLOY_USER" "/home/$DEPLOY_USER/.ssh/authorized_keys"
-chmod 600 "/home/$DEPLOY_USER/.ssh/authorized_keys"
-echo "    -> cole a CHAVE PÚBLICA do CI em /home/$DEPLOY_USER/.ssh/authorized_keys"
+echo "    -> DEFINA a senha do '$DEPLOY_USER' agora:  passwd $DEPLOY_USER"
+echo "       (use essa MESMA senha no secret DEPLOY_PASSWORD do GitHub)"
 
 echo "==> 4/6  Firewall (ufw): libera 22, 80, 443"
 ufw allow OpenSSH        >/dev/null 2>&1 || ufw allow 22/tcp
@@ -61,7 +59,7 @@ cat <<EOF
 ================================================================================
  Bootstrap concluído. Próximos passos (você, manualmente):
    1) passwd                      # TROQUE a senha de root (a antiga vazou no chat)
-   2) cole a chave pública do CI em /home/$DEPLOY_USER/.ssh/authorized_keys
+   2) passwd $DEPLOY_USER         # defina a senha do deploy = secret DEPLOY_PASSWORD
    3) nano $APP_DIR/deploy/.env   # preencha DB_PASSWORD, ANTHROPIC_API_KEY, etc.
    4) suba as planilhas .xlsx do cliente para $APP_DIR/data/  (scp, fora do git)
    5) primeiro deploy:

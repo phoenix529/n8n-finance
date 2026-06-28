@@ -3,9 +3,9 @@
 Pipeline: **`git push` → GitHub Actions → SSH (chave) → VPS → `docker compose up`**.
 Stack em containers: PostgreSQL+pgvector · FastAPI (IA) · n8n · Grafana · Caddy (proxy/TLS).
 
-> **Eu (assistente) não insiro segredos.** Os passos que envolvem senhas/chaves
-> (rotacionar a senha de root, criar a chave SSH, preencher Secrets no GitHub e o
-> `deploy/.env` no servidor) são feitos **por você** — estão marcados com 🔑.
+> **Eu (assistente) não insiro segredos.** Os passos que envolvem senhas
+> (rotacionar a senha de root, definir a senha do usuário `deploy`, preencher Secrets
+> no GitHub e o `deploy/.env` no servidor) são feitos **por você** — marcados com 🔑.
 
 ---
 
@@ -40,24 +40,24 @@ bash bootstrap.sh
 > Se o repositório for **privado**, em vez do `curl` faça `git clone` autenticado ou
 > suba o `deploy/` via `scp`, depois rode `bash /opt/cockpit-ref/deploy/bootstrap.sh`.
 
-### 3. 🔑 Chave SSH do CI (no SEU computador)
+### 3. 🔑 Senha do usuário de deploy (no servidor)
 ```bash
-ssh-keygen -t ed25519 -f cockpit_deploy -C "github-actions-deploy" -N ""
-# -> cole o conteúdo de cockpit_deploy.pub no servidor:
-#    /home/deploy/.ssh/authorized_keys
-# -> guarde cockpit_deploy (privada) para o passo 4
+passwd deploy        # defina uma senha FORTE e única (não a senha de root)
 ```
+> Auth por senha (escolha do projeto). Mitigações já aplicadas pelo bootstrap:
+> `fail2ban` (bane IPs após tentativas falhas) + `ufw`. Recomendado ainda: restringir
+> a porta 22 ao seu IP (`ufw allow from SEU.IP to any port 22 proto tcp`).
 
 ### 4. 🔑 Secrets e variável no GitHub
 `Settings → Secrets and variables → Actions`:
 
-| Tipo | Nome | Valor |
+| Tab | Nome | Valor |
 |---|---|---|
-| Secret | `DEPLOY_HOST` | `76.13.172.100` |
-| Secret | `DEPLOY_USER` | `deploy` |
-| Secret | `DEPLOY_SSH_KEY` | conteúdo de `cockpit_deploy` (chave **privada**) |
-| Secret | `DEPLOY_PORT` | `22` (opcional) |
-| **Variable** | `DEPLOY_ENABLED` | `true`  ← destrava o job de deploy |
+| **Secrets** | `DEPLOY_HOST` | `76.13.172.100` |
+| **Secrets** | `DEPLOY_USER` | `deploy` |
+| **Secrets** | `DEPLOY_PASSWORD` | a senha que você definiu no passo 3 |
+| **Secrets** | `DEPLOY_PORT` | `22` (opcional) |
+| **Variables** | `DEPLOY_ENABLED` | `true`  ← destrava o job de deploy |
 
 ### 5. 🔑 Segredos do servidor + dados do cliente
 ```bash
@@ -82,8 +82,9 @@ Depois disso, **todo `git push` na `main`** implanta sozinho. Acompanhe na aba
 - **`.github/workflows/deploy.yml`** — após o CI, conecta por SSH e roda
   `deploy.sh` (que faz `git reset --hard origin/main` + `docker compose up -d --build`
   + smoke test no `/health` da IA).
-- **Segredos** vivem só em dois lugares, nunca no git: *GitHub Secrets* (chave SSH)
-  e `deploy/.env` *no servidor*. Os `.xlsx` do cliente ficam só em `data/` no servidor.
+- **Segredos** vivem só em dois lugares, nunca no git: *GitHub Secrets* (senha do
+  deploy) e `deploy/.env` *no servidor*. Os `.xlsx` do cliente ficam só em `data/`
+  no servidor.
 
 ## Operação
 ```bash
