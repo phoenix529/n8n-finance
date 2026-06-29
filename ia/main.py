@@ -88,7 +88,7 @@ import sys as _sys, importlib, traceback
 _ING = str(ROOT / "ingestao")
 if _ING not in _sys.path:
     _sys.path.insert(0, _ING)
-RUNNERS = {"ingestao": "main", "qualidade": "validators", "cor": "cor_loader"}
+RUNNERS = {"sync": "drive_sync", "ingestao": "main", "qualidade": "validators", "cor": "cor_loader"}
 
 
 @app.post("/run/{script}")
