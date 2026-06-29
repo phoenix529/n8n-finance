@@ -37,9 +37,13 @@ services:
       DB_HOST: db                          # alcança o Postgres pelo nome do serviço
       DB_PORT: "5432"
       IA_PORT: "8500"
+      GDRIVE_FOLDER_ID: ${GDRIVE_FOLDER_ID:-}                       # pasta/Shared Drive das planilhas
+      GOOGLE_APPLICATION_CREDENTIALS: /opt/cockpit-ref/secrets/gdrive_sa.json
     volumes:
       # Planilhas confidenciais do cliente: ficam SÓ no servidor, montadas em runtime.
       - ../data:/opt/cockpit-ref/data
+      # Chave da service account do Google (read-only, só no servidor, NÃO versionada).
+      - ./secrets:/opt/cockpit-ref/secrets:ro
     depends_on:
       db:
         condition: service_healthy

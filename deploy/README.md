@@ -101,3 +101,39 @@ docker compose exec ia python /opt/cockpit-ref/ingestao/main.py
 cd /opt/cockpit-ref && git log --oneline -5
 git reset --hard <commit-bom> && bash deploy/deploy.sh
 ```
+
+## Sincronização automática do Google Drive (sem upload manual)
+
+As planilhas ficam num Shared Drive; um service account (somente leitura) baixa as
+5 mais recentes para `data/incoming/` e a ingestão roda em seguida. `drive_sync.py`
+faz o download (`POST /run/sync`); o workflow n8n **20 — Sync Drive + Ingestão**
+agenda tudo (diário 07:00). Os segredos nunca entram no git.
+
+**Configuração (uma vez):**
+1. **Google Cloud** → projeto → habilite a **Google Drive API**.
+2. **IAM → Service Accounts** → crie uma SA → **Keys → Add key → JSON** (baixe o arquivo).
+3. No servidor, coloque a chave em `deploy/secrets/gdrive_sa.json` (a pasta é gitignored):
+   ```bash
+   mkdir -p /opt/cockpit-ref/deploy/secrets
+   # envie o JSON para /opt/cockpit-ref/deploy/secrets/gdrive_sa.json (scp), depois:
+   chmod 600 /opt/cockpit-ref/deploy/secrets/gdrive_sa.json
+   ```
+4. **Compartilhe o Shared Drive/pasta** com o e-mail da SA (`…@…iam.gserviceaccount.com`)
+   como **Leitor** (no Shared Drive: adicione a SA como *membro* — Viewer).
+5. Em `deploy/.env`, defina `GDRIVE_FOLDER_ID=<id-da-pasta>` (o id que aparece na URL
+   do Drive: `drive.google.com/drive/folders/<ID>`).
+6. Recarregue o stack: `cd /opt/cockpit-ref/deploy && docker compose up -d`.
+
+**Testar o download isolado:**
+```bash
+docker compose exec ia curl -s -X POST http://127.0.0.1:8500/run/sync
+# espera {"ok":true,...}; os .xlsx aparecem em /opt/cockpit-ref/data/incoming/
+```
+
+**Ligar a automação:** no n8n (`:5678`), importe `n8n/workflows/20_ref_sync_drive.json`,
+e ative o workflow (toggle **Active**). Ele roda 07:00: baixa do Drive → ingere →
+ramifica em sucesso/erro. Disparo manual: botão **Execute workflow**.
+
+> Lembrete operacional: as abas ligadas ao ERP só trazem números novos depois de
+> **atualizar + salvar** o Excel no Drive. Rotina: atualizar → revisar → salvar →
+> o n8n pega a versão salva.
