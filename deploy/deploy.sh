@@ -11,6 +11,10 @@ set -euo pipefail
 APP_DIR="/opt/cockpit-ref"
 cd "$APP_DIR"
 
+# O repo pode pertencer a outro usuário (ex.: criado pelo 'deploy', mas o deploy roda
+# como root) -> git aborta com "dubious ownership". Marca o diretório como confiável.
+git config --global --add safe.directory "$APP_DIR" 2>/dev/null || true
+
 echo "==> git: atualizando para origin/main"
 git fetch --quiet origin main
 git reset --hard origin/main          # estado = exatamente o que está no repositório
