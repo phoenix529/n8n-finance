@@ -29,6 +29,12 @@ echo "==> docker compose: build + up"
 docker compose pull --quiet db n8n grafana caddy || true
 docker compose up -d --build
 
+# O container 'ia' roda como uid 10001 (não-root). Garante que ele LÊ o segredo do
+# Drive e ESCREVE os downloads em data/incoming, mesmo após upload/rotação como root.
+echo "==> ajustando permissões dos volumes da IA (uid 10001)"
+mkdir -p "$APP_DIR/data/incoming"
+chown -R 10001:10001 "$APP_DIR/data" "$APP_DIR/deploy/secrets" 2>/dev/null || true
+
 echo "==> aguardando saúde dos serviços"
 sleep 8
 docker compose ps

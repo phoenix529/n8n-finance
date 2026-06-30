@@ -117,7 +117,10 @@ agenda tudo (diário 07:00). Os segredos nunca entram no git.
    mkdir -p /opt/cockpit-ref/deploy/secrets
    # envie o JSON para /opt/cockpit-ref/deploy/secrets/gdrive_sa.json (scp), depois:
    chmod 600 /opt/cockpit-ref/deploy/secrets/gdrive_sa.json
+   chown 10001:10001 /opt/cockpit-ref/deploy/secrets/gdrive_sa.json  # uid do container 'ia'
    ```
+   > `deploy.sh` reaplica esse `chown` (em `data/` e `secrets/`) a cada deploy, então
+   > após uma rotação de chave basta rodar o deploy — não precisa ajustar à mão.
 4. **Compartilhe o Shared Drive/pasta** com o e-mail da SA (`…@…iam.gserviceaccount.com`)
    como **Leitor** (no Shared Drive: adicione a SA como *membro* — Viewer).
 5. Em `deploy/.env`, defina `GDRIVE_FOLDER_ID=<id-da-pasta>` (o id que aparece na URL
