@@ -15,7 +15,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://127.0.0.1:8501/run/qualidade",
+        "url": "http://ia:8500/run/qualidade",
         "options": { "timeout": 120000 }
       },
       "id": "http-quality",

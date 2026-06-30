@@ -1,7 +1,7 @@
 name: Deploy
 
 # Implanta no VPS a cada push na main (após o CI passar).
-# Conecta por SSH com CHAVE (nunca senha) e roda deploy/deploy.sh no servidor.
+# Conecta por SSH com SENHA (secret DEPLOY_PASSWORD) e roda deploy/deploy.sh no servidor.
 #
 # Secrets necessários (Settings > Secrets and variables > Actions) — VOCÊ preenche:
 #   DEPLOY_HOST      -> 76.13.172.100

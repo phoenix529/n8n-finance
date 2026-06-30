@@ -87,7 +87,9 @@ def run():
         out += [f"  - {a}" for a in alerts]
     else:
         out.append("Qualidade OK.")
-    return {"ok": not had_error, "total": total, "output": "\n".join(out)}
+    # exit/ok reflete ERROS de carga E falhas de qualidade (§6.4) — assim o n8n
+    # ramifica (IF) e alerta também quando a reprodutibilidade/consistência falha.
+    return {"ok": (not had_error) and (not alerts), "total": total, "output": "\n".join(out)}
 
 
 def main():

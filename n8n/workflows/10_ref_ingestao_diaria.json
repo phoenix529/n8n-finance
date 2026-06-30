@@ -15,7 +15,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://127.0.0.1:8501/run/ingestao",
+        "url": "http://ia:8500/run/ingestao",
         "options": { "timeout": 300000 }
       },
       "id": "http-ingestao",

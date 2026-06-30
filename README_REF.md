@@ -54,7 +54,7 @@ Importe `n8n/workflows/10_*.json` e `11_*.json` e ative-os. Workflow 1 roda **07
 
 > **Importante (verificado no n8n ao vivo):** o nó **Execute Command** está DESABILITADO nesta
 > instância n8n (erro "Unrecognized node type"). O blueprint §3.1 permite a alternativa — rodar o
-> script **via HTTP**. Por isso os workflows usam um nó **HTTP Request** → `POST http://127.0.0.1:8501/run/{ingestao|qualidade|cor}`
+> script **via HTTP**. Por isso os workflows usam um nó **HTTP Request** → `POST http://127.0.0.1:8500/run/{ingestao|qualidade|cor}`
 > (endpoint do serviço FastAPI, autenticado por `X-API-Key`), que executa `main.py`/`validators.py`/`cor_loader.py`
 > e devolve `{ok, returncode, stdout, stderr}`. O nó IF ramifica em `{{ $json.ok }}`.
 > Testado ao vivo: trigger → HTTP `/run/ingestao` (ok=true) → IF → ramo de sucesso. ✓
