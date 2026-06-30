@@ -79,8 +79,15 @@ def run():
             erros.append(f["name"])
             out.append(f"  ERRO {f['name']}: {e}")
 
-    out.append(f"-- {baixados} arquivo(s) baixado(s); {len(erros)} erro(s) --")
-    return {"ok": len(erros) == 0 and baixados > 0, "output": "\n".join(out)}
+    # Completude: esperamos uma planilha por empresa (5). Sinaliza se faltar alguma
+    # já no estágio de download (não espera o ingestao detectar arquivo ausente).
+    EXPECTED = ("REF+", "BD", "4PR", "Viv", "Zup")
+    nomes = [f["name"] for f in files]
+    faltando = [p for p in EXPECTED if not any(n.startswith(p) for n in nomes)]
+    if faltando:
+        out.append(f"  AVISO: empresa(s) sem planilha DRE no Drive: {', '.join(faltando)}")
+    out.append(f"-- {baixados} arquivo(s) baixado(s); {len(erros)} erro(s); faltando {len(faltando)} --")
+    return {"ok": len(erros) == 0 and baixados > 0 and not faltando, "output": "\n".join(out)}
 
 
 def main():

@@ -1,6 +1,6 @@
 # Deploy & CI/CD — Cockpit Financeiro Estratégico REF
 
-Pipeline: **`git push` → GitHub Actions → SSH (chave) → VPS → `docker compose up`**.
+Pipeline: **`git push` → GitHub Actions → SSH (senha, DEPLOY_PASSWORD) → VPS → `docker compose up`**.
 Stack em containers: PostgreSQL+pgvector · FastAPI (IA) · n8n · Grafana · Caddy (proxy/TLS).
 
 > **Eu (assistente) não insiro segredos.** Os passos que envolvem senhas

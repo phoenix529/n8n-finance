@@ -78,7 +78,7 @@ QUALITY_CHECKS = [
         JOIN dim_conta c ON c.id=f.conta_id JOIN dim_empresa e ON e.id=f.empresa_id
         JOIN dim_periodo p ON p.id=f.periodo_id
         WHERE c.descricao='RECEITA BRUTA' AND e.codigo='REF' AND p.ano=2026""",
-     lambda v: None if (v is not None and abs(float(v) - 94215954.69) < 0.50)
+     lambda v: None if (v is not None and abs(float(v) - 94215954.69) < 0.01)
                else f"Receita Bruta REF 2026 = {v} (esperado 94.215.954,69 da aba Resumo)"),
 ]
 

@@ -20,8 +20,8 @@ Dados reais das **5 empresas** (REF, BD, 4PR, Viv, Zup) carregados: **2026 mensa
 |---|---|---|
 | **Grafana** (dashboard executivo) | `http://<IP-do-servidor>:3000/d/cockpit-ref` | **login** (senha em `conf/custom.ini` / não versionada) |
 | Cockpit customizado (visão executiva bônus) | https://perl-function-reduce-favour.trycloudflare.com | aberto (demo) |
-| IA (FastAPI) | `http://127.0.0.1:8501/perguntar` | header `X-API-Key: <do .env IA_API_KEY>` |
-| Runner n8n→Python (FastAPI) | `http://127.0.0.1:8501/run/{ingestao\|qualidade\|cor}` | interno (só 127.0.0.1; scripts fixos) |
+| IA (FastAPI) | `http://127.0.0.1:8500/perguntar` | header `X-API-Key: <do .env IA_API_KEY>` |
+| Runner n8n→Python (FastAPI) | `http://127.0.0.1:8500/run/{ingestao\|qualidade\|cor}` | interno (só 127.0.0.1; scripts fixos) |
 | n8n | `http://127.0.0.1:5678` | conta de owner do n8n |
 
 > Os links públicos usam túnel Cloudflare efêmero (mudam se o servidor reiniciar). Para link fixo, usar o domínio/HTTPS do VPS.
