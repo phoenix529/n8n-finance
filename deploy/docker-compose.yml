@@ -60,6 +60,9 @@ services:
       N8N_HOST: ${N8N_HOST:-localhost}
       N8N_PORT: "5678"
       N8N_PROTOCOL: ${N8N_PROTOCOL:-http}
+      # Acesso por IP/HTTP (sem TLS ainda) -> cookie de sessão não pode ser "secure",
+      # senão a UI bloqueia o login. Volte a "true" quando tiver HTTPS/domínio.
+      N8N_SECURE_COOKIE: "${N8N_SECURE_COOKIE:-false}"
       WEBHOOK_URL: ${N8N_WEBHOOK_URL:-http://localhost:5678/}
       # Os workflows chamam o runner da IA pela rede interna do compose:
       IA_BASE_URL: http://ia:8500
