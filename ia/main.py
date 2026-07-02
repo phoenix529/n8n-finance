@@ -92,11 +92,26 @@ def perguntar(p: Pergunta, x_api_key: str = Header(default="")):
 # Usado pelos workflows do n8n via nó HTTP Request (sempre disponível), evitando
 # o nó Execute Command (desabilitado por segurança nesta instância n8n).
 # ---------------------------------------------------------------------------
-import sys as _sys, importlib, traceback
+import sys as _sys, importlib.util, traceback
 _ING = str(ROOT / "ingestao")
 if _ING not in _sys.path:
     _sys.path.insert(0, _ING)
 RUNNERS = {"sync": "drive_sync", "ingestao": "main", "qualidade": "validators", "cor": "cor_loader"}
+
+
+def _load_runner(modname):
+    """Carrega ingestao/<modname>.py SEMPRE pelo caminho do arquivo, com chave
+    única no sys.modules. Corrige colisão real: o uvicorn já registra ESTE
+    arquivo (ia/main.py) como módulo 'main'; import_module('main') devolvia o
+    módulo errado (sem run()) em vez de ingestao/main.py."""
+    key = "ingestao_" + modname
+    if key in _sys.modules:
+        return _sys.modules[key]
+    spec = importlib.util.spec_from_file_location(key, os.path.join(_ING, modname + ".py"))
+    mod = importlib.util.module_from_spec(spec)
+    _sys.modules[key] = mod
+    spec.loader.exec_module(mod)
+    return mod
 
 
 @app.post("/run/{script}")
@@ -109,7 +124,7 @@ def run_script(script: str):
         raise HTTPException(status_code=404, detail=f"script desconhecido (use {list(RUNNERS)})")
     t0 = time.time()
     try:
-        m = importlib.import_module(RUNNERS[script])
+        m = _load_runner(RUNNERS[script])
         r = m.run()
         ok = bool(r.get("ok"))
         return {"ok": ok, "script": script, "returncode": 0 if ok else 1,
