@@ -84,7 +84,7 @@
       "type": "n8n-nodes-base.emailSend",
       "typeVersion": 2.1,
       "position": [ 1540, 160 ],
-      "credentials": { "smtp": { "id": "smtp-ref", "name": "SMTP REF" } },
+      "credentials": { "smtp": { "id": "4yuE5FPP1rLopZRD", "name": "SMTP REF" } },
       "notes": "SMTP do cliente (credencial 'SMTP REF' no n8n; Gmail exige App Password). Ajuste toEmail para os destinatários finais."
     },
     {
@@ -101,7 +101,7 @@
       "type": "n8n-nodes-base.emailSend",
       "typeVersion": 2.1,
       "position": [ 1540, 320 ],
-      "credentials": { "smtp": { "id": "smtp-ref", "name": "SMTP REF" } },
+      "credentials": { "smtp": { "id": "4yuE5FPP1rLopZRD", "name": "SMTP REF" } },
       "notes": "SMTP do cliente (credencial 'SMTP REF' no n8n)."
     },
     {
@@ -118,7 +118,7 @@
       "type": "n8n-nodes-base.emailSend",
       "typeVersion": 2.1,
       "position": [ 1020, 440 ],
-      "credentials": { "smtp": { "id": "smtp-ref", "name": "SMTP REF" } },
+      "credentials": { "smtp": { "id": "4yuE5FPP1rLopZRD", "name": "SMTP REF" } },
       "notes": "SMTP do cliente (credencial 'SMTP REF' no n8n)."
     }
   ],
