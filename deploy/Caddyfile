@@ -4,5 +4,15 @@
 #   "cockpit.seu-dominio.com" -> Caddy emite TLS automático (HTTPS) via Let's Encrypt.
 {$SITE_ADDRESS} {
 	encode gzip
-	reverse_proxy grafana:3000
+
+	# Cockpit app (SPA + API) — servido pelo container ia (FastAPI)
+	@cockpit path /app /app/* /api/*
+	handle @cockpit {
+		reverse_proxy ia:8500
+	}
+
+	# Padrão: Grafana (dashboard blueprint)
+	handle {
+		reverse_proxy grafana:3000
+	}
 }

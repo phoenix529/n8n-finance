@@ -18,6 +18,7 @@ import anthropic
 import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from context_builder import build_context
+import api_cockpit                                  # API do Cockpit (API_CONTRACT.md)
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 _envp = ROOT / ".env"
@@ -43,6 +44,13 @@ Format monetary values in R$ with a thousands separator.
 app = FastAPI(title="Cockpit REF — IA Consultiva", version="1.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 _client = anthropic.Anthropic()   # lê ANTHROPIC_API_KEY do ambiente
+
+# --- Cockpit: API REST (/api/*) + frontend estático (/app) -------------------
+app.include_router(api_cockpit.router)
+_APP_DIR = ROOT / "cockpit-app"
+if _APP_DIR.is_dir():                               # guarda: só monta se existir
+    from fastapi.staticfiles import StaticFiles
+    app.mount("/app", StaticFiles(directory=str(_APP_DIR), html=True), name="cockpit-app")
 
 
 class Pergunta(BaseModel):

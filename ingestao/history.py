@@ -68,23 +68,38 @@ def load_company_history(empresa, path):
     return rows
 
 
-def main():
+def run():
+    """Executa a carga do histórico IN-PROCESS e devolve {ok, output} (padrão de main.run())."""
     import pandas as pd
-    total = 0
+    out, ok, total = [], True, 0
     for emp, prefix in PREFIX.items():
         hits = sorted(glob.glob(str(INCOMING / f"{prefix}*DRE*.xlsx")))
         if not hits:
+            out.append(f"  [{emp}] arquivo não encontrado (prefixo {prefix})")
+            ok = False
             continue
-        rows = load_company_history(emp, hits[0])
+        try:
+            rows = load_company_history(emp, hits[0])
+        except Exception as e:
+            out.append(f"  [{emp}] ERRO: {e}")
+            ok = False
+            continue
         if rows:
             df = pd.DataFrame(rows)
             n = upsert_dre(emp, df)
             total += n
             anos = sorted({r["year"] for r in rows})
-            print(f"  [{emp}] histórico: {n} linhas | anos {anos[0]}–{anos[-1]}")
+            out.append(f"  [{emp}] histórico: {n} linhas | anos {anos[0]}–{anos[-1]}")
         else:
-            print(f"  [{emp}] sem aba de resumo anual detectada")
-    print(f"-- histórico carregado: {total} linhas (2018–2025, ponto em dez) --")
+            out.append(f"  [{emp}] sem aba de resumo anual detectada")
+    out.append(f"-- histórico carregado: {total} linhas (2018–2025, ponto em dez) --")
+    return {"ok": ok, "output": "\n".join(out)}
+
+
+def main():
+    r = run()
+    print(r["output"])
+    sys.exit(0 if r["ok"] else 1)
 
 
 if __name__ == "__main__":

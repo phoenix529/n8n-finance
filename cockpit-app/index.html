@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cockpit Financeiro — Grupo REF</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+
+<!-- SIDEBAR -->
+<aside class="sidebar" id="sidebar">
+  <div class="sidebar-logo">
+    <div class="logo-mark">Grupo REF</div>
+    <div class="logo-sub">Cockpit Financeiro</div>
+  </div>
+
+  <nav class="sidebar-nav" aria-label="Navegação principal">
+    <div class="nav-section">Visão</div>
+    <a class="nav-item" href="#/macro" data-route="macro">
+      <span class="nav-icon">◈</span><span class="nav-label">Macro — Grupo</span>
+    </a>
+    <a class="nav-item" href="#/micro/ref-plus" data-route="micro/ref-plus">
+      <span class="nav-icon">◉</span><span class="nav-label">REF+</span>
+    </a>
+    <a class="nav-item" href="#/micro/black-door" data-route="micro/black-door">
+      <span class="nav-icon">◉</span><span class="nav-label">Black Door</span>
+    </a>
+    <a class="nav-item" href="#/micro/4in" data-route="micro/4in">
+      <span class="nav-icon">◉</span><span class="nav-label">4In</span>
+    </a>
+    <a class="nav-item" href="#/micro/viv" data-route="micro/viv">
+      <span class="nav-icon">◉</span><span class="nav-label">Viv Experience</span>
+    </a>
+    <a class="nav-item" href="#/micro/zuptech" data-route="micro/zuptech">
+      <span class="nav-icon">◉</span><span class="nav-label">Zuptech</span>
+    </a>
+
+    <div class="nav-section">Análise</div>
+    <a class="nav-item" href="#/receitas" data-route="receitas">
+      <span class="nav-icon">≡</span><span class="nav-label">Receitas &amp; Fees</span>
+    </a>
+    <a class="nav-item" href="#/custos" data-route="custos">
+      <span class="nav-icon">⊟</span><span class="nav-label">Custos &amp; Folha</span>
+    </a>
+    <a class="nav-item" href="#/alertas" data-route="alertas">
+      <span class="nav-icon">⚑</span><span class="nav-label">Alertas</span>
+      <span class="nav-badge" id="nav-alertas-badge" hidden>0</span>
+    </a>
+  </nav>
+
+  <div class="sidebar-bottom">
+    <div class="user-pill">
+      <div class="avatar">CR</div>
+      <div class="user-info">
+        <p>C-Level</p>
+        <span>Acesso total</span>
+      </div>
+    </div>
+  </div>
+</aside>
+
+<!-- MAIN -->
+<div class="main">
+
+  <!-- TOPBAR -->
+  <header class="topbar">
+    <div style="flex:1">
+      <div class="topbar-title" id="topbar-title">Cockpit Financeiro</div>
+      <div class="topbar-sub" id="topbar-sub"></div>
+    </div>
+    <div class="filter-group">
+      <span class="filter-label">Ano</span>
+      <select id="ano-select" aria-label="Filtro de ano"></select>
+    </div>
+    <div class="badge-live" id="badge-proj">
+      <span class="dot-live"></span> <span id="badge-proj-txt">Projeção</span>
+    </div>
+  </header>
+
+  <!-- CONTENT -->
+  <div class="content" id="content"></div>
+</div><!-- /main -->
+
+<!-- LOGIN OVERLAY -->
+<div class="login-overlay" id="login-overlay" hidden>
+  <form class="login-card" id="login-form" autocomplete="off">
+    <div class="logo-mark">Grupo REF</div>
+    <div class="logo-sub" style="margin-bottom:20px;">Cockpit Financeiro</div>
+    <label class="login-label" for="login-senha">Senha de acesso</label>
+    <input class="login-input" id="login-senha" type="password" name="senha"
+           placeholder="••••••••" autocomplete="current-password" required>
+    <button class="login-btn" id="login-btn" type="submit">Entrar</button>
+    <div class="login-msg" id="login-msg" role="alert"></div>
+  </form>
+</div>
+
+<script src="js/core.js" defer></script>
+<script src="js/screens/macro.js" defer></script>
+<script src="js/screens/micro.js" defer></script>
+<script src="js/screens/receitas.js" defer></script>
+<script src="js/screens/custos.js" defer></script>
+<script src="js/screens/alertas.js" defer></script>
+</body>
+</html>

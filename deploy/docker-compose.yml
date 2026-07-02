@@ -39,6 +39,7 @@ services:
       IA_PORT: "8500"
       GDRIVE_FOLDER_ID: ${GDRIVE_FOLDER_ID:-}                       # pasta/Shared Drive das planilhas
       GOOGLE_APPLICATION_CREDENTIALS: /opt/cockpit-ref/secrets/gdrive_sa.json
+      COCKPIT_PASSWORD: ${COCKPIT_PASSWORD:-}                       # senha de acesso do Cockpit app (/app)
     volumes:
       # Planilhas confidenciais do cliente: ficam SÓ no servidor, montadas em runtime.
       - ../data:/opt/cockpit-ref/data

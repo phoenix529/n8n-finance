@@ -16,9 +16,10 @@ COPY ingestao/requirements.txt  ingestao/requirements.txt
 RUN pip install -r ia/requirements.txt -r ingestao/requirements.txt
 
 # Código da aplicação (dados confidenciais .xlsx NÃO entram na imagem — vêm por volume).
-COPY ia/        ia/
-COPY ingestao/  ingestao/
-COPY db/        db/
+COPY ia/          ia/
+COPY ingestao/    ingestao/
+COPY db/          db/
+COPY cockpit-app/ cockpit-app/
 
 # Usuário sem privilégios.
 RUN useradd --create-home --uid 10001 appuser && chown -R appuser /opt/cockpit-ref

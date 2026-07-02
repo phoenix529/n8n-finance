@@ -28,6 +28,8 @@ fi
 echo "==> docker compose: build + up"
 docker compose pull --quiet db n8n grafana caddy || true
 docker compose up -d --build
+# Caddy não recarrega o Caddyfile sozinho (bind-mount) — restart garante config nova
+docker compose restart caddy >/dev/null
 
 # O container 'ia' roda como uid 10001 (não-root). Garante que ele LÊ o segredo do
 # Drive e ESCREVE os downloads em data/incoming, mesmo após upload/rotação como root.
