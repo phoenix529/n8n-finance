@@ -67,11 +67,11 @@
   }
   function tooltipDark(extra) {
     return Object.assign({
-      backgroundColor: '#1A1E2C',
-      borderColor: 'rgba(255,255,255,0.1)',
+      backgroundColor: '#FFFFFF',
+      borderColor: 'rgba(0,0,0,0.10)',
       borderWidth: 1,
-      titleColor: '#F0F2F8',
-      bodyColor: '#9BA3B8'
+      titleColor: '#1C1C1C',
+      bodyColor: '#81807C'
     }, extra || {});
   }
 
@@ -163,7 +163,7 @@
             'aria-label="Abrir detalhe do departamento ' + esc(d.nome) + '" ' +
             'style="display:flex;align-items:center;gap:8px;padding:6px 0;cursor:pointer;">' +
             '<span style="font-size:11px;color:var(--text-2);width:110px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(d.nome) + '</span>' +
-            '<div class="mini-bar-wrap" style="flex:1;width:auto;"><div class="mini-bar-fill" style="width:' + w + '%;background:' + esc(empresa.color || '#F5C842') + '"></div></div>' +
+            '<div class="mini-bar-wrap" style="flex:1;width:auto;"><div class="mini-bar-fill" style="width:' + w + '%;background:' + esc(empresa.color || '#D9DA00') + '"></div></div>' +
             '<span style="font-family:\'JetBrains Mono\',monospace;font-size:10px;color:var(--text-1);white-space:nowrap;">' + fmtMoeda(d.total) + ' · ' + n(d.headcount) + 'p</span>' +
           '</div>';
         });
@@ -216,7 +216,7 @@
                   datasets: [{
                     label: 'Custo médio/func.',
                     data: itens.map(function (e) { return e.custo_medio; }),
-                    backgroundColor: itens.map(function (e) { return e.color || '#F5C842'; }),
+                    backgroundColor: itens.map(function (e) { return e.color || '#D9DA00'; }),
                     borderRadius: 4,
                     borderSkipped: false
                   }]
@@ -231,8 +231,8 @@
                     })
                   },
                   scales: {
-                    x: { grid: { display: false }, ticks: { color: '#5A6178', font: { size: 9 } }, border: { color: 'rgba(255,255,255,0.06)' } },
-                    y: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#5A6178', font: { size: 9 }, callback: function (v) { return 'R$' + fmtShort(v); } }, border: { color: 'transparent' } }
+                    x: { grid: { display: false }, ticks: { color: '#81807C', font: { size: 9 } }, border: { color: 'rgba(0,0,0,0.07)' } },
+                    y: { grid: { color: 'rgba(0,0,0,0.05)' }, ticks: { color: '#81807C', font: { size: 9 }, callback: function (v) { return 'R$' + fmtShort(v); } }, border: { color: 'transparent' } }
                   }
                 }
               });
@@ -308,7 +308,7 @@
     box.innerHTML = '<div class="treemap" role="group" ' +
       'aria-label="Treemap da folha: largura de cada bloco proporcional ao total da empresa; blocos internos são os departamentos. Clique num departamento para abrir o detalhe.">' +
       itens.map(function (f, ei) {
-        var cor = f.empresa.color || '#F5C842';
+        var cor = f.empresa.color || '#D9DA00';
         var depts = (f.folha.departamentos || []).slice().sort(function (a, b) { return n(b.total) - n(a.total); });
         return '<div class="treemap-block" data-ck="tm-emp" data-e="' + ei + '" ' +
           'style="flex:' + Math.max(n(f.folha.total), 1) + ' 1 0;border-color:' + hexA(cor, 0.5) + ';background:' + hexA(cor, 0.08) + ';">' +
@@ -347,7 +347,7 @@
       box.innerHTML = '<p class="empty-state">Sem departamentos para o mês.</p>';
       return;
     }
-    var cor = maior.empresa.color || '#F5C842';
+    var cor = maior.empresa.color || '#D9DA00';
     if (chip) {
       chip.textContent = maior.empresa.label;
       chip.style.background = hexA(cor, 0.15);
@@ -396,7 +396,7 @@
       if (y < chart.chartArea.top || y > chart.chartArea.bottom) return;
       var ctx = chart.ctx;
       ctx.save();
-      ctx.strokeStyle = '#F5C842';
+      ctx.strokeStyle = '#D9DA00';
       ctx.lineWidth = 1;
       ctx.setLineDash([4, 4]);
       ctx.beginPath();
@@ -404,7 +404,7 @@
       ctx.lineTo(chart.chartArea.right, y);
       ctx.stroke();
       ctx.setLineDash([]);
-      ctx.fillStyle = '#F5C842';
+      ctx.fillStyle = '#D9DA00';
       ctx.font = 'bold 10px Inter, sans-serif';
       ctx.fillText('Ref. 20% folha/receita', chart.chartArea.left + 6, y - 5);
       ctx.restore();
@@ -438,7 +438,7 @@
         datasets: [{
           label: 'Folha / Receita',
           data: vals,
-          backgroundColor: vals.map(function (v) { return v > 20 ? '#EF4444' : v > 10 ? '#F5C842' : '#22C55E'; }),
+          backgroundColor: vals.map(function (v) { return v > 20 ? '#E5484D' : v > 10 ? '#D9DA00' : '#22C55E'; }),
           borderRadius: 5,
           borderSkipped: false
         }]
@@ -459,8 +459,8 @@
           })
         },
         scales: {
-          x: { grid: { display: false }, ticks: { color: '#5A6178', font: { size: 10 } }, border: { color: 'rgba(255,255,255,0.06)' } },
-          y: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#5A6178', font: { size: 10 }, callback: function (v) { return v + '%'; } }, border: { color: 'transparent' } }
+          x: { grid: { display: false }, ticks: { color: '#81807C', font: { size: 10 } }, border: { color: 'rgba(0,0,0,0.07)' } },
+          y: { grid: { color: 'rgba(0,0,0,0.05)' }, ticks: { color: '#81807C', font: { size: 10 }, callback: function (v) { return v + '%'; } }, border: { color: 'transparent' } }
         }
       },
       plugins: [ref20]

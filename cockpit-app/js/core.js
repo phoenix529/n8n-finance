@@ -11,13 +11,13 @@
 
   /* ─── Registro de empresas (slug ↔ código do banco, cf. contrato) ─── */
   CK.EMPRESAS = [
-    { slug: 'ref-plus',   code: 'REF', label: 'REF+',           color: '#F5C842' },
+    { slug: 'ref-plus',   code: 'REF', label: 'REF+',           color: '#D9DA00' },
     { slug: 'black-door', code: 'BD',  label: 'Black Door',     color: '#22C55E' },
     { slug: '4in',        code: '4PR', label: '4In',            color: '#F97316' },
     { slug: 'viv',        code: 'VIV', label: 'Viv Experience', color: '#A855F7' },
     { slug: 'zuptech',    code: 'ZUP', label: 'Zuptech',        color: '#3B82F6' },
   ];
-  CK.GRUPO = { slug: 'grupo', code: null, label: 'Grupo REF', color: '#F5C842' };
+  CK.GRUPO = { slug: 'grupo', code: null, label: 'Grupo REF', color: '#D9DA00' };
 
   // Resolve slug → objeto empresa (inclui 'grupo')
   CK.empresa = function (slug) {
@@ -124,16 +124,16 @@
 
   /* ─── CK.charts — helpers Chart.js tema dark ─── */
   const DARK = {
-    grid:    'rgba(255,255,255,0.04)',
-    ticks:   '#5A6178',
-    tooltipBg: '#1A1E2C',
-    tooltipBorder: 'rgba(255,255,255,0.1)',
-    title:   '#F0F2F8',
-    body:    '#9BA3B8',
+    grid:    'rgba(0,0,0,0.05)',
+    ticks:   '#81807C',
+    tooltipBg: '#FFFFFF',
+    tooltipBorder: 'rgba(0,0,0,0.10)',
+    title:   '#1C1C1C',
+    body:    '#81807C',
   };
 
   if (window.Chart) {
-    Chart.defaults.font.family = "'Inter', sans-serif";
+    Chart.defaults.font.family = "'Urbanist', 'Inter', sans-serif";
     Chart.defaults.font.size = 10;
     Chart.defaults.color = DARK.ticks;
   }
@@ -184,12 +184,12 @@
         scales: {
           x: {
             grid: { display: false },
-            ticks: { color: DARK.ticks, font: { family: "'Inter', sans-serif", size: 10 } },
-            border: { color: 'rgba(255,255,255,0.06)' },
+            ticks: { color: DARK.ticks, font: { family: "'Urbanist', 'Inter', sans-serif", size: 10 } },
+            border: { color: 'rgba(0,0,0,0.07)' },
           },
           y: {
             grid: { color: DARK.grid },
-            ticks: { color: DARK.ticks, font: { family: "'Inter', sans-serif", size: 10 } },
+            ticks: { color: DARK.ticks, font: { family: "'Urbanist', 'Inter', sans-serif", size: 10 } },
             border: { dash: [3, 3], color: 'transparent' },
           },
         },
@@ -235,7 +235,7 @@
           datasets: [{
             data: cfg.data,
             backgroundColor: cfg.colors,
-            borderColor: '#141720',
+            borderColor: '#FFFFFF',
             borderWidth: 3,
             hoverBorderWidth: 2,
           }],

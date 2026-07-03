@@ -66,11 +66,11 @@
   }
   function tooltipDark(extra) {
     return Object.assign({
-      backgroundColor: '#1A1E2C',
-      borderColor: 'rgba(255,255,255,0.1)',
+      backgroundColor: '#FFFFFF',
+      borderColor: 'rgba(0,0,0,0.10)',
       borderWidth: 1,
-      titleColor: '#F0F2F8',
-      bodyColor: '#9BA3B8'
+      titleColor: '#1C1C1C',
+      bodyColor: '#81807C'
     }, extra || {});
   }
 
@@ -104,7 +104,7 @@
       var y = eixo.getPixelForValue(80);
       var ctx = chart.ctx;
       ctx.save();
-      ctx.strokeStyle = '#EF4444';
+      ctx.strokeStyle = '#E5484D';
       ctx.lineWidth = 1;
       ctx.setLineDash([4, 4]);
       ctx.beginPath();
@@ -112,7 +112,7 @@
       ctx.lineTo(chart.chartArea.right, y);
       ctx.stroke();
       ctx.setLineDash([]);
-      ctx.fillStyle = '#EF4444';
+      ctx.fillStyle = '#E5484D';
       ctx.font = 'bold 10px Inter, sans-serif';
       ctx.fillText('80% acum.', chart.chartArea.left + 6, y - 5);
       ctx.restore();
@@ -161,7 +161,7 @@
             type: 'bar',
             label: 'Fee anual',
             data: top.map(function (c) { return n(c.fee_anual); }),
-            backgroundColor: top.map(function (c) { return c.color || '#F5C842'; }),
+            backgroundColor: top.map(function (c) { return c.color || '#D9DA00'; }),
             borderRadius: 5,
             borderSkipped: false,
             yAxisID: 'y',
@@ -186,10 +186,10 @@
           })
         },
         scales: {
-          x: { grid: { display: false }, ticks: { color: '#5A6178', font: { size: 10 } }, border: { color: 'rgba(255,255,255,0.06)' } },
+          x: { grid: { display: false }, ticks: { color: '#81807C', font: { size: 10 } }, border: { color: 'rgba(0,0,0,0.07)' } },
           y: {
-            grid: { color: 'rgba(255,255,255,0.04)' },
-            ticks: { color: '#5A6178', font: { size: 10 }, callback: function (v) { return 'R$' + fmtShort(v); } },
+            grid: { color: 'rgba(0,0,0,0.05)' },
+            ticks: { color: '#81807C', font: { size: 10 }, callback: function (v) { return 'R$' + fmtShort(v); } },
             border: { color: 'transparent' }
           },
           pct: {
@@ -208,7 +208,7 @@
 
   /* ── drawer: detalhe de um cliente (fee x12 + variáveis) ─────── */
   function abreDrawerCliente(cli, varsCliente) {
-    var cor = cli.color || '#F5C842';
+    var cor = cli.color || '#D9DA00';
     var feeAnual = n(cli.fee_anual) || n(cli.fee_mensal) * 12;
 
     function html() {
@@ -272,7 +272,7 @@
       var chave = String(c.cliente || '').trim().toLowerCase();
       var temVar = !!(mapaVar && mapaVar[chave] && mapaVar[chave].length);
       var w = Math.round(Math.abs(n(c.fee_anual)) / maxFee * 100);
-      var cor = c.color || '#F5C842';
+      var cor = c.color || '#D9DA00';
       return '<tr data-ck="fee-row" data-i="' + i + '" tabindex="0" role="button" ' +
         'aria-label="Abrir detalhe do cliente ' + esc(c.cliente) + '">' +
         '<td style="font-weight:600;color:var(--text-1)">' + esc(c.cliente) +
@@ -319,7 +319,7 @@
           {
             label: 'Fees fixos (ano)',
             data: itens.map(function (e) { return e.fees; }),
-            backgroundColor: itens.map(function (e) { return e.color || '#F5C842'; }),
+            backgroundColor: itens.map(function (e) { return e.color || '#D9DA00'; }),
             borderRadius: 4,
             borderSkipped: false,
             stack: 'rec'
@@ -338,7 +338,7 @@
         responsive: true,
         maintainAspectRatio: false,
         plugins: {
-          legend: { labels: { color: '#9BA3B8', font: { size: 10 }, boxWidth: 10 } },
+          legend: { labels: { color: '#81807C', font: { size: 10 }, boxWidth: 10 } },
           tooltip: tooltipDark({
             callbacks: {
               label: function (c) { return ' ' + c.dataset.label + ': ' + fmtMoeda(c.parsed.y); }
@@ -346,11 +346,11 @@
           })
         },
         scales: {
-          x: { stacked: true, grid: { display: false }, ticks: { color: '#5A6178', font: { size: 10 } }, border: { color: 'rgba(255,255,255,0.06)' } },
+          x: { stacked: true, grid: { display: false }, ticks: { color: '#81807C', font: { size: 10 } }, border: { color: 'rgba(0,0,0,0.07)' } },
           y: {
             stacked: true,
-            grid: { color: 'rgba(255,255,255,0.04)' },
-            ticks: { color: '#5A6178', font: { size: 10 }, callback: function (v) { return 'R$' + fmtShort(v); } },
+            grid: { color: 'rgba(0,0,0,0.05)' },
+            ticks: { color: '#81807C', font: { size: 10 }, callback: function (v) { return 'R$' + fmtShort(v); } },
             border: { color: 'transparent' }
           }
         }
@@ -362,10 +362,10 @@
   function pintaChips(el, aoTrocar) {
     var wrap = el.querySelector('[data-ck="chips"]');
     if (!wrap) return;
-    var itens = [{ slug: 'grupo', label: 'Todas', color: '#F5C842' }].concat(listaEmpresas());
+    var itens = [{ slug: 'grupo', label: 'Todas', color: '#D9DA00' }].concat(listaEmpresas());
     wrap.innerHTML = itens.map(function (e) {
       var ativo = e.slug === empresaSel;
-      var cor = e.color || '#F5C842';
+      var cor = e.color || '#D9DA00';
       return '<button type="button" class="chip" data-slug="' + esc(e.slug) + '" ' +
         'aria-pressed="' + ativo + '" style="cursor:pointer;font-family:\'Inter\',sans-serif;' +
         'background:' + (ativo ? hexA(cor, 0.18) : 'var(--bg-hover)') + ';' +

@@ -77,25 +77,25 @@
 
   function tooltipDark(extra) {
     return Object.assign({
-      backgroundColor: '#1A1E2C',
-      borderColor: 'rgba(255,255,255,0.1)',
+      backgroundColor: '#FFFFFF',
+      borderColor: 'rgba(0,0,0,0.10)',
       borderWidth: 1,
-      titleColor: '#F0F2F8',
-      bodyColor: '#9BA3B8'
+      titleColor: '#1C1C1C',
+      bodyColor: '#81807C'
     }, extra || {});
   }
   function eixoX() {
-    return { grid: { display: false }, ticks: { color: '#5A6178', font: { size: 10 } }, border: { color: 'rgba(255,255,255,0.06)' } };
+    return { grid: { display: false }, ticks: { color: '#81807C', font: { size: 10 } }, border: { color: 'rgba(0,0,0,0.07)' } };
   }
   function eixoYMoeda() {
     return {
-      grid: { color: 'rgba(255,255,255,0.04)' },
-      ticks: { color: '#5A6178', font: { size: 10 }, callback: function (v) { return fmtShort(v); } },
+      grid: { color: 'rgba(0,0,0,0.05)' },
+      ticks: { color: '#81807C', font: { size: 10 }, callback: function (v) { return fmtShort(v); } },
       border: { color: 'transparent' }
     };
   }
   function legendaDark() {
-    return { position: 'bottom', labels: { color: '#9BA3B8', font: { size: 10 }, boxWidth: 10, boxHeight: 10 } };
+    return { position: 'bottom', labels: { color: '#81807C', font: { size: 10 }, boxWidth: 10, boxHeight: 10 } };
   }
 
   // plugin local: rótulos de valor acima das barras (EBIT trimestral)
@@ -110,7 +110,7 @@
           var v = ds.data[i];
           if (v == null) return;
           ctx.save();
-          ctx.fillStyle = typeof ds.backgroundColor === 'string' ? ds.backgroundColor : '#9BA3B8';
+          ctx.fillStyle = typeof ds.backgroundColor === 'string' ? ds.backgroundColor : '#81807C';
           ctx.font = "600 9px 'JetBrains Mono', monospace";
           ctx.textAlign = 'center';
           ctx.fillText(ptBR(v, 1) + '%', barra.x, n(v) >= 0 ? barra.y - 4 : barra.y + 11);
@@ -346,12 +346,12 @@
             type: 'line', label: 'Resultado Líquido', data: rl, order: 0,
             borderColor: '#22C55E', borderWidth: 2, tension: 0.3,
             pointRadius: 4, pointHoverRadius: 5,
-            pointBackgroundColor: rl.map(function (v) { return v >= 0 ? '#22C55E' : '#EF4444'; }),
-            pointBorderColor: rl.map(function (v) { return v >= 0 ? '#22C55E' : '#EF4444'; }),
-            segment: { borderColor: function (ctx) { return (ctx.p0.parsed.y < 0 || ctx.p1.parsed.y < 0) ? '#EF4444' : '#22C55E'; } }
+            pointBackgroundColor: rl.map(function (v) { return v >= 0 ? '#22C55E' : '#E5484D'; }),
+            pointBorderColor: rl.map(function (v) { return v >= 0 ? '#22C55E' : '#E5484D'; }),
+            segment: { borderColor: function (ctx) { return (ctx.p0.parsed.y < 0 || ctx.p1.parsed.y < 0) ? '#E5484D' : '#22C55E'; } }
           },
           { label: 'Receita Bruta', data: rb, backgroundColor: '#3B82F6', borderRadius: 4, borderSkipped: false, order: 2 },
-          { label: 'Res. Agência', data: ra, backgroundColor: '#F5C842', borderRadius: 4, borderSkipped: false, order: 2 }
+          { label: 'Res. Agência', data: ra, backgroundColor: '#D9DA00', borderRadius: 4, borderSkipped: false, order: 2 }
         ]
       },
       options: {
@@ -409,7 +409,7 @@
         labels: labels,
         datasets: [
           { label: 'EBIT Negócio %', data: vNeg, backgroundColor: '#3B82F6', borderRadius: 4, borderSkipped: false },
-          { label: 'EBIT Agência %', data: vAg, backgroundColor: '#F5C842', borderRadius: 4, borderSkipped: false }
+          { label: 'EBIT Agência %', data: vAg, backgroundColor: '#D9DA00', borderRadius: 4, borderSkipped: false }
         ]
       },
       options: {
@@ -425,8 +425,8 @@
         scales: {
           x: eixoX(),
           y: {
-            grid: { color: 'rgba(255,255,255,0.04)' },
-            ticks: { color: '#5A6178', font: { size: 10 }, callback: function (v) { return v + '%'; } },
+            grid: { color: 'rgba(0,0,0,0.05)' },
+            ticks: { color: '#81807C', font: { size: 10 }, callback: function (v) { return v + '%'; } },
             border: { color: 'transparent' }
           }
         }
@@ -461,7 +461,7 @@
           { label: 'Receita Bruta', data: rb, backgroundColor: '#3B82F6', borderRadius: 4, borderSkipped: false },
           {
             label: 'Resultado Líquido', data: rl, borderRadius: 4, borderSkipped: false,
-            backgroundColor: rl.map(function (v) { return v >= 0 ? '#22C55E' : '#EF4444'; })
+            backgroundColor: rl.map(function (v) { return v >= 0 ? '#22C55E' : '#E5484D'; })
           }
         ]
       },
@@ -488,7 +488,7 @@
       var slug = (params && params.slug) || '';
       var emp = getEmpresa(slug);
       var label = (emp && emp.label) || slug;
-      var cor = (emp && emp.color) || '#F5C842';
+      var cor = (emp && emp.color) || '#D9DA00';
       var qs = qsAno();
 
       function abreDrawer() { abreDrawerComposicao(slug, label, qs); }

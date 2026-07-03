@@ -5,27 +5,30 @@
    semáforo, treemap, login). Sem build step — CSS puro.
    ═══════════════════════════════════════════════════════════════ */
 
+/* TEMA CLARO — paleta do dashboard de referência do cliente
+   (paper #F9F8F6, ink #1C1C1C, gray #81807C, line #E6E3DC, amarelo REF #FEFF00/#D9DA00) */
 :root {
-  --bg-base:    #0D0F14;
-  --bg-card:    #141720;
-  --bg-card2:   #1A1E2C;
-  --bg-hover:   #1E2330;
-  --accent:     #F5C842;
-  --accent-dim: rgba(245,200,66,0.12);
-  --accent-glow:rgba(245,200,66,0.25);
+  --bg-base:    #F9F8F6;
+  --bg-card:    #FFFFFF;
+  --bg-card2:   #F3F2EF;
+  --bg-hover:   #EFEEE9;
+  --accent:     #D9DA00;
+  --accent-bright: #FEFF00;
+  --accent-dim: rgba(217,218,0,0.16);
+  --accent-glow:rgba(217,218,0,0.32);
   --green:      #22C55E;
   --green-dim:  rgba(34,197,94,0.12);
-  --red:        #EF4444;
-  --red-dim:    rgba(239,68,68,0.12);
+  --red:        #E5484D;
+  --red-dim:    rgba(229,72,77,0.10);
   --blue:       #3B82F6;
-  --blue-dim:   rgba(59,130,246,0.12);
+  --blue-dim:   rgba(59,130,246,0.10);
   --purple:     #A855F7;
   --orange:     #F97316;
-  --text-1:     #F0F2F8;
-  --text-2:     #9BA3B8;
-  --text-3:     #5A6178;
-  --border:     rgba(255,255,255,0.06);
-  --border-acc: rgba(245,200,66,0.3);
+  --text-1:     #1C1C1C;
+  --text-2:     #55544F;
+  --text-3:     #81807C;
+  --border:     #E6E3DC;
+  --border-acc: rgba(217,218,0,0.55);
   --radius-sm:  6px;
   --radius:     10px;
   --radius-lg:  16px;
@@ -34,7 +37,7 @@
 /* [hidden] SEMPRE esconde — classes com display próprio (ex. .flag-card) venceriam a regra da UA */
 [hidden] { display: none !important; }
 body {
-  font-family: 'Inter', sans-serif;
+  font-family: 'Urbanist', 'Inter', sans-serif;
   background: var(--bg-base);
   color: var(--text-1);
   min-height: 100vh;
@@ -132,9 +135,9 @@ a { color: inherit; text-decoration: none; }
 .avatar {
   width:32px; height:32px;
   border-radius:50%;
-  background: linear-gradient(135deg, var(--accent) 0%, #E8A800 100%);
+  background: linear-gradient(135deg, var(--accent) 0%, #C8C900 100%);
   display:flex; align-items:center; justify-content:center;
-  font-size:12px; font-weight:700; color:#0D0F14;
+  font-size:12px; font-weight:700; color:#1C1C1C;
   flex-shrink:0;
 }
 .user-info p { font-size:12px; font-weight:500; }
@@ -164,7 +167,7 @@ select, .filter-select {
   padding: 6px 10px;
   border-radius: var(--radius-sm);
   cursor:pointer;
-  font-family: 'Inter', sans-serif;
+  font-family: 'Urbanist', 'Inter', sans-serif;
   outline:none;
 }
 select:focus { border-color: var(--border-acc); }
@@ -334,8 +337,8 @@ select:focus { border-color: var(--border-acc); }
   transition: all 0.15s;
 }
 .btn:hover { color: var(--text-1); border-color: var(--border-acc); }
-.btn.primary { background: var(--accent); color: #0D0F14; font-weight: 600; border-color: transparent; }
-.btn.primary:hover { background: #E8B93A; }
+.btn.primary { background: var(--accent); color: #1C1C1C; font-weight: 600; border-color: transparent; }
+.btn.primary:hover { background: #C8C900; }
 
 /* ═══ DRAWER (slide-over, nível 1 e 2) ═══ */
 .drawer-overlay {
@@ -540,16 +543,16 @@ select:focus { border-color: var(--border-acc); }
 .login-input:focus { border-color: var(--border-acc); }
 .login-btn {
   background: var(--accent);
-  color: #0D0F14;
+  color: #1C1C1C;
   border: none;
-  font-family: 'Inter', sans-serif;
+  font-family: 'Urbanist', 'Inter', sans-serif;
   font-size: 13px; font-weight: 700;
   padding: 10px;
   border-radius: var(--radius-sm);
   cursor: pointer;
   transition: background 0.15s;
 }
-.login-btn:hover { background: #E8B93A; }
+.login-btn:hover { background: #C8C900; }
 .login-btn:disabled { opacity: 0.5; cursor: wait; }
 .login-msg { font-size: 12px; color: var(--red); margin-top: 12px; min-height: 16px; line-height: 1.4; }
 

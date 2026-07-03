@@ -83,11 +83,11 @@
   // tooltip com tema dark idêntico ao mockup
   function tooltipDark(extra) {
     return Object.assign({
-      backgroundColor: '#1A1E2C',
-      borderColor: 'rgba(255,255,255,0.1)',
+      backgroundColor: '#FFFFFF',
+      borderColor: 'rgba(0,0,0,0.10)',
       borderWidth: 1,
-      titleColor: '#F0F2F8',
-      bodyColor: '#9BA3B8'
+      titleColor: '#1C1C1C',
+      bodyColor: '#81807C'
     }, extra || {});
   }
 
@@ -120,12 +120,12 @@
             '<div style="display:flex;align-items:center;gap:8px;min-width:0;">' +
               '<span class="rank">' + (i + 1) + '</span>' +
               '<span style="font-size:13px;font-weight:600;color:var(--text-1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(c.cliente) + '</span>' +
-              '<span class="company-tag" style="background:' + hexA(c.color, 0.15) + ';color:' + esc(c.color || '#F5C842') + ';">' + esc(c.empresa_label || c.empresa_slug || '') + '</span>' +
+              '<span class="company-tag" style="background:' + hexA(c.color, 0.15) + ';color:' + esc(c.color || '#D9DA00') + ';">' + esc(c.empresa_label || c.empresa_slug || '') + '</span>' +
             '</div>' +
             '<span style="font-family:\'JetBrains Mono\',monospace;font-size:12px;color:var(--text-1);white-space:nowrap;">' + fmtMoeda(c.fee_mensal) + '/mês</span>' +
           '</div>' +
           '<div style="display:flex;align-items:center;gap:8px;margin-top:6px;">' +
-            '<div class="mini-bar-wrap" style="flex:1;width:auto;"><div class="mini-bar-fill" style="width:' + w + '%;background:' + esc(c.color || '#F5C842') + ';"></div></div>' +
+            '<div class="mini-bar-wrap" style="flex:1;width:auto;"><div class="mini-bar-fill" style="width:' + w + '%;background:' + esc(c.color || '#D9DA00') + ';"></div></div>' +
             '<span style="font-size:10px;color:var(--text-3);font-family:\'JetBrains Mono\',monospace;white-space:nowrap;">' + fmtMoeda(c.fee_anual) + '/ano · ' + fmtPct(pcts[i]) + '</span>' +
           '</div>' +
         '</div>';
@@ -159,7 +159,7 @@
 
     var labels = anos.map(function (a) { return String(a.ano); });
     var cores = vals.map(function (v) {
-      return v >= 8 ? '#F5C842' : v >= 4 ? '#3B82F6' : v >= 0 ? '#9BA3B8' : '#EF4444';
+      return v >= 8 ? '#D9DA00' : v >= 4 ? '#3B82F6' : v >= 0 ? '#81807C' : '#E5484D';
     });
     canvas.setAttribute('aria-label',
       'Gráfico de barras: EBIT Negócio histórico da REF+ de ' + labels[0] + ' a ' + labels[labels.length - 1]);
@@ -186,8 +186,8 @@
           })
         },
         scales: {
-          x: { grid: { display: false }, ticks: { color: '#5A6178', font: { size: 10 } }, border: { color: 'rgba(255,255,255,0.06)' } },
-          y: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#5A6178', font: { size: 10 }, callback: function (v) { return v + '%'; } }, border: { color: 'transparent' } }
+          x: { grid: { display: false }, ticks: { color: '#81807C', font: { size: 10 } }, border: { color: 'rgba(0,0,0,0.07)' } },
+          y: { grid: { color: 'rgba(0,0,0,0.05)' }, ticks: { color: '#81807C', font: { size: 10 }, callback: function (v) { return v + '%'; } }, border: { color: 'transparent' } }
         }
       }
     });
@@ -209,8 +209,8 @@
         labels: mix.map(function (m) { return m.label; }),
         datasets: [{
           data: mix.map(function (m) { return n(m.receita); }),
-          backgroundColor: mix.map(function (m) { return m.color || '#F5C842'; }),
-          borderColor: '#141720',
+          backgroundColor: mix.map(function (m) { return m.color || '#D9DA00'; }),
+          borderColor: '#FFFFFF',
           borderWidth: 3,
           hoverBorderWidth: 2
         }]
@@ -250,7 +250,7 @@
       leg.innerHTML = mix.map(function (m, i) {
         return '<div class="legend-row" role="button" tabindex="0" data-slug="' + esc(m.slug) + '" style="cursor:pointer;">' +
           '<div class="legend-left">' +
-            '<div class="legend-dot" style="background:' + esc(m.color || '#F5C842') + '"></div>' +
+            '<div class="legend-dot" style="background:' + esc(m.color || '#D9DA00') + '"></div>' +
             '<div><div class="legend-name">' + esc(m.label) + '</div>' +
             '<div class="legend-pct">' + fmtPct(pcts[i]) + ' da rec.</div></div>' +
           '</div>' +
@@ -280,7 +280,7 @@
 
     tbody.innerHTML = clientes.slice(0, 8).map(function (c, i) {
       var w = Math.round(Math.abs(n(c.fee_anual)) / maxFee * 100);
-      var cor = c.color || '#F5C842';
+      var cor = c.color || '#D9DA00';
       return '<tr data-ck="cliente-row" tabindex="0">' +
         '<td><span class="rank">' + (i + 1) + '</span></td>' +
         '<td style="font-weight:600;color:var(--text-1)">' + esc(c.cliente) + '</td>' +
