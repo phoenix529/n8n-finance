@@ -55,8 +55,12 @@ CUSTOS, PESSOAL, INFRA, OUTRAS, ADM, TRIB = (
     "CUSTOS DOS SERVICOS", "GASTOS COM PESSOAL", "INFRAESTRUTURA",
     "OUTRAS DESPESAS", "DESPESAS ADMINISTRATIVAS", "TRIBUTOS FEDERAIS")
 CAIXA = "GERACAO DE CAIXA"                               # já vem ACUMULADA na planilha
-CONTAS_DESPESA = [PESSOAL, INFRA, OUTRAS, ADM]          # ranking de /api/despesas
-CONTAS_MENSAIS = [RB, RL, RA, EBIT, RLIQ, CUSTOS] + CONTAS_DESPESA + [TRIB, CAIXA]
+# RESOLVIDO (verificado na DRE-Base do cliente): "DESPESAS ADM." é um ITEM DE DETALHE
+# do bloco de despesas (junto de Consultorias/TI/ERP/Viagens/Bancárias), já contido
+# nos totais — a cadeia RA − pessoal − infra − outras = EBIT fecha EXATA sem ele.
+# Por isso ADM fica FORA do ranking/composição (evita dupla contagem).
+CONTAS_DESPESA = [PESSOAL, INFRA, OUTRAS]               # ranking de /api/despesas
+CONTAS_MENSAIS = [RB, RL, RA, EBIT, RLIQ, CUSTOS] + CONTAS_DESPESA + [ADM, TRIB, CAIXA]
 
 META_EBIT_PCT = float(os.environ.get("COCKPIT_META_EBIT", "8"))   # A09 — meta default 8%
 

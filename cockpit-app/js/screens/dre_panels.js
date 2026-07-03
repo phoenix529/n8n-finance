@@ -538,11 +538,12 @@
 
   /* ══ (i) composição das despesas + ranking ═════════════════════ */
   function pintaDespesas(sec, desp, realizadoAte, ano) {
+    // 'administrativas' NÃO entra: é item de DETALHE já contido nos totais
+    // (DRE fecha sem ele — ver nota em ia/api_cockpit.py); empilhar duplicaria.
     var GRUPOS = [
       { campo: 'pessoal',         label: 'Pessoal',        cor: INK },
       { campo: 'infra',           label: 'Infraestrutura', cor: GRAY },
-      { campo: 'outras',          label: 'Outras',         cor: GRAY_LT },
-      { campo: 'administrativas', label: 'Administrativas', cor: ACCENT }
+      { campo: 'outras',          label: 'Outras',         cor: ACCENT }
     ];
 
     // stacked bars mensais
@@ -552,7 +553,7 @@
       var labels = meses.map(function (m) { return nomeMes(m.mes); });
       function ehProj(i) { return n(meses[i].mes) > realizadoAte; }
       canvas.setAttribute('aria-label',
-        'Composição das despesas operacionais por mês em ' + ano + ': barras empilhadas de pessoal, infraestrutura, outras e administrativas.');
+        'Composição das despesas operacionais por mês em ' + ano + ': barras empilhadas de pessoal, infraestrutura e outras despesas.');
       novoChart(canvas, {
         type: 'bar',
         data: {
