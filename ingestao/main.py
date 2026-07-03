@@ -23,6 +23,7 @@ from db import upsert_dre, upsert_receita_cliente, log_carga
 from validators import validar_dre, run_quality_checks
 import folha_fees
 import history
+import tri_hist
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 INCOMING = pathlib.Path(os.environ.get("INCOMING", ROOT / "data" / "incoming"))
@@ -100,6 +101,15 @@ def run():
         had_error = had_error or (not rf["ok"])
     except Exception as e:
         out.append(f"  [folha/fees] ERRO: {e}")
+        had_error = True
+
+    # histórico trimestral 2024–2026 (aba 'Comparativo/Resumo tri') — hist[] do cockpit
+    try:
+        rt = tri_hist.run()
+        out.append(rt["output"])
+        had_error = had_error or (not rt["ok"])
+    except Exception as e:
+        out.append(f"  [tri_hist] ERRO: {e}")
         had_error = True
 
     alerts = run_quality_checks()              # checagens de qualidade pós-carga

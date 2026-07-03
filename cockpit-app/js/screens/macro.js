@@ -468,7 +468,7 @@
         pega('/api/kpis/grupo' + qs),
         pega('/api/historico/ref-plus'),
         pega('/api/fees/grupo' + qs),
-        pega('/api/alertas')
+        pega('/api/alertas' + qs)
       ]).then(function (r) {
         var kpis = r[0], historico = r[1], fees = r[2], alertas = r[3];
         if (!el.isConnected) return; // tela já foi trocada
@@ -480,6 +480,14 @@
         pintaClientes(el, fees);
         pintaAlertas(el, alertas);
       });
+
+      // Iteração 2: painéis "Análise DRE" (dre_panels.js) após o grid inferior.
+      // Guard: se o script faltar, a tela Macro continua funcionando normalmente.
+      if (window.CKDRE && typeof CKDRE.render === 'function') {
+        try {
+          CKDRE.render(el, 'grupo', (window.CK && CK.state && CK.state.ano) || null);
+        } catch (e) { console.error('CKDRE.render (macro):', e); }
+      }
     }
   });
 })();

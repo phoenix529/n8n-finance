@@ -591,3 +591,70 @@ select:focus { border-color: var(--border-acc); }
   .sidebar-bottom { padding: 10px 8px; }
   .user-pill { justify-content: center; padding: 8px 4px; }
 }
+
+/* ═══ Iteração 2 — seção "Análise DRE" (js/screens/dre_panels.js) ═══
+   Painéis realizado vs projeção replicando o dashboard de referência
+   do cliente. Tema claro — só usa os tokens já definidos acima. */
+.ckdre { margin-top: 28px; }
+.ckdre .chart-card { margin-bottom: 16px; }
+.ckdre-sec-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin: 6px 0 14px;
+}
+.ckdre-sec-title .dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+}
+/* (a) chip/banner "Realizado até {Mês} · demais meses = projeção" */
+.ckdre-banner {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--accent-dim);
+  border: 1px solid var(--border-acc);
+  color: var(--text-1);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  border-radius: 20px;
+  padding: 5px 12px;
+}
+/* grid 2 colunas dos painéis (empilha em telas estreitas) */
+.ckdre-grid2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.ckdre-grid2 .chart-card { margin-bottom: 0; }
+@media (max-width:1100px) {
+  .ckdre-grid2 { grid-template-columns: 1fr; }
+}
+/* (e) linhas projetadas da tabela de resumo mensal */
+.ckdre .data-table tr.proj td { opacity: 0.55; }
+.ckdre .data-table tr.proj:hover td { opacity: 0.8; }
+.tag-proj {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  background: var(--bg-card2);
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  margin-left: 6px;
+  vertical-align: middle;
+}

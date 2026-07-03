@@ -36,7 +36,7 @@ DB = dict(host=os.environ.get("DB_HOST", "127.0.0.1"), port=int(os.environ.get("
 
 # --- Registro de empresas (API_CONTRACT.md — tabela slug ↔ code ↔ label ↔ cor)
 EMPRESAS = [
-    {"slug": "ref-plus",   "code": "REF", "label": "REF+",           "color": "#F5C842"},
+    {"slug": "ref-plus",   "code": "REF", "label": "REF+",           "color": "#D9DA00"},
     {"slug": "black-door", "code": "BD",  "label": "Black Door",     "color": "#22C55E"},
     {"slug": "4in",        "code": "4PR", "label": "4In",            "color": "#F97316"},
     {"slug": "viv",        "code": "VIV", "label": "Viv Experience", "color": "#A855F7"},
@@ -44,12 +44,19 @@ EMPRESAS = [
 ]
 BY_SLUG = {e["slug"]: e for e in EMPRESAS}
 BY_CODE = {e["code"]: e for e in EMPRESAS}
-GRUPO = {"slug": "grupo", "code": None, "label": "Grupo REF", "color": "#F5C842"}
+GRUPO = {"slug": "grupo", "code": None, "label": "Grupo REF", "color": "#D9DA00"}
 
 # Linhas-chave da DRE (dim_conta.descricao) — contrato §"Contas DRE usadas"
 RB, RL, RA, EBIT, RLIQ = ("RECEITA BRUTA", "RECEITA OPERACIONAL LIQUIDA",
                           "RESULTADO OPERACIONAL DA AGENCIA",
                           "RESULTADO OPERACIONAL ANTES DOS IMPOSTOS (EBIT)", "RESULTADO LIQUIDO")
+# Linhas de custo/despesa da DRE detalhada (Iteração 2) — valores gravados POSITIVOS
+CUSTOS, PESSOAL, INFRA, OUTRAS, ADM, TRIB = (
+    "CUSTOS DOS SERVICOS", "GASTOS COM PESSOAL", "INFRAESTRUTURA",
+    "OUTRAS DESPESAS", "DESPESAS ADMINISTRATIVAS", "TRIBUTOS FEDERAIS")
+CAIXA = "GERACAO DE CAIXA"                               # já vem ACUMULADA na planilha
+CONTAS_DESPESA = [PESSOAL, INFRA, OUTRAS, ADM]          # ranking de /api/despesas
+CONTAS_MENSAIS = [RB, RL, RA, EBIT, RLIQ, CUSTOS] + CONTAS_DESPESA + [TRIB, CAIXA]
 
 META_EBIT_PCT = float(os.environ.get("COCKPIT_META_EBIT", "8"))   # A09 — meta default 8%
 
@@ -98,6 +105,15 @@ CREATE TABLE IF NOT EXISTS fato_fee_cliente (
 CREATE TABLE IF NOT EXISTS cockpit_alert_snooze (
     alert_id VARCHAR(40) PRIMARY KEY,
     ate      DATE NOT NULL
+);
+CREATE TABLE IF NOT EXISTS fato_dre_tri_hist (
+    id         SERIAL PRIMARY KEY,
+    empresa_id INT NOT NULL REFERENCES dim_empresa(id),
+    ano        INT NOT NULL,
+    tri        INT NOT NULL,
+    metrica    VARCHAR(60) NOT NULL,
+    valor      NUMERIC(16,2),
+    UNIQUE (empresa_id, ano, tri, metrica)
 );
 """
 
@@ -234,24 +250,25 @@ def _ano_default(cur):
     return int(r[0]) if r and r[0] else datetime.date.today().year
 
 
-def _dre_ano(cur, emp, ano):
-    """dict descricao -> soma no ano (empresa ou grupo)."""
+def _dre_ano(cur, emp, ano, ate=None):
+    """dict descricao -> soma no ano (empresa ou grupo). `ate` = só meses <= ate."""
     ef, ep = _emp_where(emp)
+    mf, mp = ("", []) if ate is None else (" AND p.mes<=%s", [ate])
     cur.execute(f"""SELECT c.descricao, SUM(f.valor)
         FROM fato_dre_mensal f JOIN dim_conta c ON c.id=f.conta_id
         JOIN dim_empresa e ON e.id=f.empresa_id JOIN dim_periodo p ON p.id=f.periodo_id
-        WHERE p.ano=%s{ef} GROUP BY c.descricao""", [ano] + ep)
+        WHERE p.ano=%s{mf}{ef} GROUP BY c.descricao""", [ano] + mp + ep)
     return {d: float(v) for d, v in cur.fetchall() if v is not None}
 
 
 def _dre_mensal(cur, emp, ano):
-    """dict mes -> {descricao: valor} (linhas-chave)."""
+    """dict mes -> {descricao: valor} (linhas-chave + custos/despesas da Iteração 2)."""
     ef, ep = _emp_where(emp)
     cur.execute(f"""SELECT p.mes, c.descricao, SUM(f.valor)
         FROM fato_dre_mensal f JOIN dim_conta c ON c.id=f.conta_id
         JOIN dim_empresa e ON e.id=f.empresa_id JOIN dim_periodo p ON p.id=f.periodo_id
         WHERE p.ano=%s AND c.descricao = ANY(%s){ef}
-        GROUP BY p.mes, c.descricao""", [ano, [RB, RL, RA, EBIT, RLIQ]] + ep)
+        GROUP BY p.mes, c.descricao""", [ano, CONTAS_MENSAIS] + ep)
     out = {}
     for mes, d, v in cur.fetchall():
         if v is not None:
@@ -259,13 +276,24 @@ def _dre_mensal(cur, emp, ano):
     return out
 
 
+def _realizado_ate(ano):
+    """Último mês REALIZADO do ano (Iteração 2): ano passado→12, corrente→mês-1, futuro→0."""
+    hoje = datetime.date.today()
+    if ano < hoje.year:
+        return 12
+    if ano > hoje.year:
+        return 0
+    return hoje.month - 1
+
+
 def _folha_periodo_default(cur, ano):
     """Mês default = mais recente com folha carregada (no ano; senão DRE).
     As planilhas trazem folha PROJETADA até dez; para o ano corrente, limita o
-    default ao mês-calendário atual (jul não mostra a folha 'de dezembro')."""
+    default ao último mês REALIZADO (mês-calendário anterior — mesma convenção
+    de realizado_ate), com fallback para o mês corrente se ainda não houver dado."""
     import datetime as _dt
     hoje = _dt.date.today()
-    cap = hoje.month if ano == hoje.year else 12
+    cap = max(hoje.month - 1, 1) if ano == hoje.year else 12
     cur.execute("""SELECT MAX(p.mes) FROM fato_folha_mensal f
                    JOIN dim_periodo p ON p.id=f.periodo_id WHERE p.ano=%s AND p.mes<=%s""",
                 [ano, cap])
@@ -323,6 +351,7 @@ def kpis_grupo(ano: int | None = None, _=Depends(require_session)):
                for e in EMPRESAS]
 
         return {"ano": ano,
+                "realizado_ate": _realizado_ate(ano),
                 "receita_bruta": _money(dre.get(RB)),
                 "receita_liquida": _money(dre.get(RL)),
                 "folha_mes": _money(folha_total),
@@ -343,6 +372,7 @@ def kpis_empresa(slug: str, ano: int | None = None, _=Depends(require_session)):
         dre = _dre_ano(cur, emp, ano)
         prev = _dre_ano(cur, emp, ano - 1)
         return {"ano": ano,
+                "realizado_ate": _realizado_ate(ano),
                 "receita_bruta": _money(dre.get(RB)),
                 "receita_liquida": _money(dre.get(RL)),
                 "resultado_agencia": _money(dre.get(RA)),
@@ -360,13 +390,27 @@ def dre_mensal(slug: str, ano: int | None = None, _=Depends(require_session)):
         cur = con.cursor()
         ano = ano or _ano_default(cur)
         pm = _dre_mensal(cur, emp, ano)
-        meses = [{"mes": m,
-                  "receita_bruta": _money(pm.get(m, {}).get(RB)),
-                  "resultado_agencia": _money(pm.get(m, {}).get(RA)),
-                  "resultado_liquido": _money(pm.get(m, {}).get(RLIQ)),
-                  "ebit": _money(pm.get(m, {}).get(EBIT))}
-                 for m in range(1, 13)]                      # sempre 12 itens
-        return {"ano": ano, "meses": meses}
+        meses, caixa_cum = [], 0.0
+        for m in range(1, 13):                               # sempre 12 itens
+            d = pm.get(m, {})
+            caixa_cum += d.get(RLIQ) or 0.0
+            # conta GERACAO DE CAIXA da planilha (já acumulada — bate com a referência
+            # do cliente); fallback: acumulado do resultado líquido se a linha faltar
+            caixa = d.get(CAIXA) if d.get(CAIXA) is not None else caixa_cum
+            meses.append({"mes": m,
+                          "receita_bruta": _money(d.get(RB)),
+                          "receita_liquida": _money(d.get(RL)),
+                          "resultado_agencia": _money(d.get(RA)),
+                          "resultado_liquido": _money(d.get(RLIQ)),
+                          "ebit": _money(d.get(EBIT)),
+                          "custos_diretos": _money(d.get(CUSTOS)),
+                          "pessoal": _money(d.get(PESSOAL)),
+                          "infra": _money(d.get(INFRA)),
+                          "outras": _money(d.get(OUTRAS)),
+                          "administrativas": _money(d.get(ADM)),
+                          "tributos": _money(d.get(TRIB)),
+                          "caixa_acum": round(caixa, 2)})
+        return {"ano": ano, "realizado_ate": _realizado_ate(ano), "meses": meses}
 
 
 @router.get("/dre/trimestral/{slug}")
@@ -390,14 +434,114 @@ def dre_trimestral(slug: str, ano: int | None = None, _=Depends(require_session)
             tris.append({"tri": t,
                          "receita_bruta": _money(a.get(RB)),
                          "ebit_negocio_pct": _pct(a.get(EBIT), a.get(RB)),
-                         "ebit_agencia_pct": _pct(a.get(RA), a.get(RB)),
+                         # definição da PLANILHA do cliente: % EBIT AGÊNCIA = EBIT / RESULTADO AGÊNCIA
+                         "ebit_agencia_pct": _pct(a.get(EBIT), a.get(RA)),
                          "resultado_liquido": _money(a.get(RLIQ))})
         tot = _agg(range(1, 13))
         total = {"receita_bruta": _money(tot.get(RB)),
                  "ebit_negocio_pct": _pct(tot.get(EBIT), tot.get(RB)),
-                 "ebit_agencia_pct": _pct(tot.get(RA), tot.get(RB)),
+                 "ebit_agencia_pct": _pct(tot.get(EBIT), tot.get(RA)),
                  "resultado_liquido": _money(tot.get(RLIQ))}
-        return {"ano": ano, "tris": tris, "total": total}
+
+        # hist[] (Iteração 2): anos anteriores da fato_dre_tri_hist (exclui o ano pedido)
+        _ensure_tables(cur)
+        ef, ep = _emp_where(emp)
+        cur.execute(f"""SELECT h.ano, h.tri, h.metrica, SUM(h.valor)
+            FROM fato_dre_tri_hist h JOIN dim_empresa e ON e.id=h.empresa_id
+            WHERE h.ano <> %s{ef} GROUP BY h.ano, h.tri, h.metrica
+            ORDER BY h.ano, h.tri""", [ano] + ep)
+        acc = {}
+        for a, t, met, v in cur.fetchall():
+            if v is not None:
+                acc.setdefault(int(a), {}).setdefault(int(t), {})[met] = float(v)
+        hist = []
+        for a in sorted(acc):
+            tris_h = []
+            for t in range(1, 5):
+                d = acc[a].get(t, {})
+                if emp["code"] is None:
+                    # grupo: percentuais NÃO se somam — deriva das somas (definição da planilha:
+                    # EBIT/RECEITA BRUTA e EBIT/RESULTADO OP. DA AGENCIA)
+                    neg = _pct(d.get("EBIT"), d.get("RECEITA_BRUTA"))
+                    ag = _pct(d.get("EBIT"), d.get("RESULTADO_AGENCIA"))
+                else:
+                    neg, ag = d.get("EBIT_NEG_PCT"), d.get("EBIT_AG_PCT")
+                tris_h.append({"tri": t,
+                               "receita_bruta": _money(d.get("RECEITA_BRUTA")),
+                               "ebit_negocio_pct": neg,
+                               "ebit_agencia_pct": ag,
+                               "resultado_liquido": _money(d.get("RESULTADO_LIQUIDO")),
+                               "resultado_agencia": _money(d.get("RESULTADO_AGENCIA"))})
+            hist.append({"ano": a, "tris": tris_h})
+        return {"ano": ano, "tris": tris, "total": total, "hist": hist}
+
+
+@router.get("/cascata/{slug}")
+def cascata(slug: str, ano: int | None = None, ate: int | None = None,
+            _=Depends(require_session)):
+    """Cascata (waterfall) da DRE — Iteração 2. `ate` = só meses <= ate (semestre realizado).
+    Convenção de sinais: custos/despesas gravados POSITIVOS no banco -> deltas NEGATIVOS."""
+    emp = _slug_or_404(slug)
+    if ate is not None and not 1 <= ate <= 12:
+        raise HTTPException(status_code=422, detail="ate deve estar entre 1 e 12")
+    with _conn() as con:
+        cur = con.cursor()
+        ano = ano or _ano_default(cur)
+        dre = _dre_ano(cur, emp, ano, ate)
+        rb, rl = dre.get(RB, 0.0), dre.get(RL, 0.0)
+
+        def tot(label, v):
+            return {"label": label, "valor": _money(v or 0.0), "tipo": "total"}
+
+        def neg(label, v):
+            return {"label": label, "valor": _money(-(v or 0.0)), "tipo": "delta"}
+
+        # Deltas derivados como RESÍDUOS entre os anchors do banco — a cascata
+        # SEMPRE reconcilia (RB + Σdeltas = Resultado Líquido), mesmo com planilhas
+        # parciais (ex.: Zup com #REF!) ou contas fora da cadeia (ADM em BD/4PR/VIV,
+        # onde RA − pessoal − infra − outras = EBIT exato, sem a linha ADM).
+        ra   = dre.get(RA)   or 0.0
+        ebit = dre.get(EBIT) or 0.0
+        rliq = dre.get(RLIQ) or 0.0
+        pessoal = dre.get(PESSOAL) or 0.0
+        infra   = dre.get(INFRA)   or 0.0
+        outras_resid = (ra - ebit) - pessoal - infra   # absorve OUTRAS + ADM + lacunas
+        passos = [
+            tot("Receita Bruta", rb),
+            neg("Deduções e Impostos", rb - rl),           # resíduo RB → Receita Líquida
+            tot("Receita Líquida", rl),
+            neg("Custos Diretos", rl - ra),                # resíduo RL → Resultado Agência
+            tot("Resultado da Agência", ra),
+            neg("Gastos com Pessoal", pessoal),
+            neg("Infraestrutura", infra),
+            neg("Outras despesas (incl. adm.)", outras_resid),
+            tot("EBIT", ebit),
+            neg("Tributos Federais", ebit - rliq),         # resíduo EBIT → Resultado Líquido
+            tot("Resultado Líquido", rliq),
+        ]
+        return {"ano": ano, "ate": ate, "passos": passos}
+
+
+@router.get("/despesas/{slug}")
+def despesas(slug: str, ano: int | None = None, _=Depends(require_session)):
+    """Despesas mensais + ranking anual por conta (pct sobre o total de despesas) — Iteração 2."""
+    emp = _slug_or_404(slug)
+    with _conn() as con:
+        cur = con.cursor()
+        ano = ano or _ano_default(cur)
+        pm = _dre_mensal(cur, emp, ano)
+        meses = [{"mes": m,
+                  "pessoal": _money(pm.get(m, {}).get(PESSOAL)),
+                  "infra": _money(pm.get(m, {}).get(INFRA)),
+                  "outras": _money(pm.get(m, {}).get(OUTRAS)),
+                  "administrativas": _money(pm.get(m, {}).get(ADM))}
+                 for m in range(1, 13)]                      # sempre 12 itens
+        totais = {c: sum(pm.get(m, {}).get(c) or 0.0 for m in range(1, 13))
+                  for c in CONTAS_DESPESA}
+        total = sum(totais.values())
+        ranking = [{"conta": c, "total": _money(v), "pct": _pct(v, total or None) or 0.0}
+                   for c, v in sorted(totais.items(), key=lambda kv: -kv[1])]
+        return {"ano": ano, "meses": meses, "ranking": ranking}
 
 
 @router.get("/historico/{slug}")

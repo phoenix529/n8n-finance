@@ -553,6 +553,14 @@
         pintaTrimestral(el, tri, label);
         pintaHistorico(el, hist, label);
       });
+
+      // Iteração 2: painéis "Análise DRE" (dre_panels.js) após o grid inferior.
+      // Guard: se o script faltar, a tela Micro continua funcionando normalmente.
+      if (window.CKDRE && typeof CKDRE.render === 'function') {
+        try {
+          CKDRE.render(el, slug, (window.CK && CK.state && CK.state.ano) || null);
+        } catch (e) { console.error('CKDRE.render (micro):', e); }
+      }
     }
   });
 
