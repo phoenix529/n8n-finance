@@ -119,6 +119,12 @@ def parse_tri_hist(path, empresa):
         alvo = _norm(SHEET[empresa])
         nm = next((s for s in wb.sheetnames if _norm(s) == alvo), None)
         if not nm:
+            # fallback MULTI-ANO: em 2027+ a aba muda de nome (ex.: 'Resumo tri 252627').
+            # Aceita qualquer '<comparativo|resumo> tri <dígitos>' (evita 'Resumo trimestres').
+            import re as _re
+            nm = next((s for s in wb.sheetnames
+                       if _re.fullmatch(r'(comparativo|resumo) tri \d{4,6}', _norm(s))), None)
+        if not nm:
             raise ValueError(f"aba trimestral não encontrada ({SHEET[empresa]!r})")
         ws = wb[nm]
         cols = _header_cols(ws)

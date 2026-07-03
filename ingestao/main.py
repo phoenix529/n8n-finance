@@ -38,9 +38,17 @@ PARSERS = {
 }
 
 
-def find_file(prefix):
-    hits = sorted(glob.glob(str(INCOMING / f"{prefix}*DRE*.xlsx")))
-    return hits[0] if hits else None
+def find_files(prefix):
+    """TODOS os arquivos DRE da empresa (um por ano: '... DRE Acumulado 2026.xlsx',
+    '... 2027.xlsx', ...). Multi-ano: cada um é processado com o ano do nome."""
+    return sorted(glob.glob(str(INCOMING / f"{prefix}*DRE*.xlsx")))
+
+
+def year_from_name(path, default=None):
+    """Ano (20xx) extraído do nome do arquivo; default = ano-calendário atual."""
+    import re, datetime
+    m = re.search(r"(20\d{2})", os.path.basename(path))
+    return int(m.group(1)) if m else (default or datetime.date.today().year)
 
 
 def run():
@@ -51,34 +59,35 @@ def run():
     had_error = False
     total = 0
     for empresa, (prefix, parser) in PARSERS.items():
-        caminho = find_file(prefix)
-        if not caminho:
+        caminhos = find_files(prefix)
+        if not caminhos:
             out.append(f"  [{empresa}] arquivo não encontrado (prefixo {prefix})")
             log_carga(empresa, f"{prefix}*", "erro", "arquivo não encontrado")
             had_error = True
             continue
-        try:
-            df = parser(caminho)                 # DataFrame normalizado
-            erros = validar_dre(df)              # validação
-            n = upsert_dre(empresa, df)          # INSERT/UPDATE
-            total += n
-            if erros:
-                log_carga(empresa, caminho, "parcial", erros)
-                out.append(f"  [{empresa}] PARCIAL: {n} linhas | alertas: {erros}")
-            else:
-                log_carga(empresa, caminho, "sucesso", n)
-                out.append(f"  [{empresa}] OK: {n} linhas carregadas")
-        except Exception as e:
-            log_carga(empresa, caminho, "erro", str(e))
-            out.append(f"  [{empresa}] ERRO: {e}")
-            had_error = True
+        for caminho in caminhos:                 # multi-ano: um workbook por ano
+            ano_arq = year_from_name(caminho)
+            try:
+                df = parser(caminho, ano_arq)    # DataFrame normalizado (ano do nome)
+                erros = validar_dre(df)          # validação
+                n = upsert_dre(empresa, df)      # INSERT/UPDATE
+                total += n
+                if erros:
+                    log_carga(empresa, caminho, "parcial", erros)
+                    out.append(f"  [{empresa}/{ano_arq}] PARCIAL: {n} linhas | alertas: {erros}")
+                else:
+                    log_carga(empresa, caminho, "sucesso", n)
+                    out.append(f"  [{empresa}/{ano_arq}] OK: {n} linhas carregadas")
+            except Exception as e:
+                log_carga(empresa, caminho, "erro", str(e))
+                out.append(f"  [{empresa}/{ano_arq}] ERRO: {e}")
+                had_error = True
 
-    ref_file = find_file("REF+")               # receita por cliente (REF)
-    if ref_file:
+    for ref_file in find_files("REF+"):        # receita por cliente (REF), por ano
         try:
-            dfc = parse_clientes_ref(ref_file)
+            dfc = parse_clientes_ref(ref_file, year_from_name(ref_file))
             nc = upsert_receita_cliente(dfc)
-            out.append(f"  [REF/clientes] OK: {nc} linhas (receita por cliente)")
+            out.append(f"  [REF/clientes/{year_from_name(ref_file)}] OK: {nc} linhas (receita por cliente)")
         except Exception as e:
             out.append(f"  [REF/clientes] ERRO: {e}")
             had_error = True

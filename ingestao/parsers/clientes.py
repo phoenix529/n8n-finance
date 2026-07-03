@@ -16,7 +16,7 @@ REF_YEAR = 2026
 REF_MONTH = 12   # marcador "acumulado 2026"
 
 
-def parse_clientes_ref(path):
+def parse_clientes_ref(path, year=REF_YEAR):
     src = os.path.basename(path)
     wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
     if "Resumo Faturamento" not in wb.sheetnames:
@@ -51,7 +51,7 @@ def parse_clientes_ref(path):
                     continue
                 v = row[ci - 1] if ci - 1 < len(row) else None
                 if isinstance(v, (int, float)) and v:
-                    rows.append({"company": "REF", "year": REF_YEAR, "month": REF_MONTH,
+                    rows.append({"company": "REF", "year": year, "month": REF_MONTH,
                                  "cliente": str(nome).strip(), "tipo_receita": tipo,
                                  "value": round(float(v), 2), "source": src})
     wb.close()
