@@ -32,7 +32,11 @@
     autenticado: false,
     usuario: null, // username da sessão (RBAC — Iteração 3)
     escopo: null,  // 'todas' | array de slugs permitidos | null (sessão sem RBAC → sem restrição no front)
+    admin: false,  // super-admin (Iteração 4) — habilita a tela #/admin
   };
+
+  /* ─── Super-admin (Iteração 4) ─── */
+  CK.ehAdmin = function () { return !!CK.state.admin; };
 
   /* ─── RBAC por usuário (Iteração 3 do contrato) ───
      O front só ESCONDE o que está fora do escopo — a rede de segurança
@@ -109,6 +113,7 @@
   /* ─── Aplicação do escopo na UI (sidebar + user-pill) ─── */
   function aplicaEscopo(sess) {
     CK.state.usuario = (sess && sess.usuario) || null;
+    CK.state.admin = !!(sess && sess.admin); // Iteração 4 — default false se ausente
     const emp = sess ? sess.empresas : null;
     if (emp === 'todas') CK.state.escopo = 'todas';
     else if (Array.isArray(emp)) CK.state.escopo = emp;
@@ -116,10 +121,12 @@
 
     // Sidebar: esconde "Macro — Grupo" e micros fora do escopo.
     // Receitas/Custos/Alertas ficam — as telas se adaptam ao escopo.
+    // "Administração" (data-route 'admin') só p/ super-admin (Iteração 4).
     document.querySelectorAll('.nav-item[data-route]').forEach(el => {
       const r = el.dataset.route;
       let visivel = true;
       if (r === 'macro') visivel = CK.temAcesso('grupo');
+      else if (r === 'admin') visivel = CK.ehAdmin();
       else if (r.indexOf('micro/') === 0) visivel = CK.temAcesso(r.slice(6));
       el.style.display = visivel ? '' : 'none';
     });
@@ -394,7 +401,7 @@
     const h = (location.hash || '#/macro').replace(/^#\/?/, '');
     const parts = h.split('/').filter(Boolean);
     if (parts[0] === 'micro' && parts[1]) return { name: 'micro', params: { slug: parts[1] } };
-    if (['macro', 'receitas', 'custos', 'alertas'].includes(parts[0]))
+    if (['macro', 'receitas', 'custos', 'alertas', 'admin'].includes(parts[0]))
       return { name: parts[0], params: {} };
     return { name: 'macro', params: {} };
   }
@@ -413,6 +420,7 @@
     // (Cobre também o hash default '#/macro' no load de usuário com escopo parcial.)
     const negada =
       (route.name === 'macro' && !CK.temAcesso('grupo')) ||
+      (route.name === 'admin' && !CK.ehAdmin()) ||
       (route.name === 'micro' && !CK.temAcesso(route.params.slug));
     if (negada) { location.hash = '#/' + rotaInicial(); return; } // hashchange re-roteia
 
@@ -542,7 +550,7 @@
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          usuario: ($('#login-usuario') ? $('#login-usuario').value.trim() : ''),
+          usuario: ($('#login-usuario') ? $('#login-usuario').value.trim().toLowerCase() : ''),
           senha: $('#login-senha').value,
         }),
       });

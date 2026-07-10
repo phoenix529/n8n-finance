@@ -40,6 +40,32 @@ Todos os valores vêm do PostgreSQL `cockpit_ref` (NUNCA hardcoded — spec §6 
   telas consolidadas escondidos p/ escopo parcial; rota default de escopo parcial = 1ª empresa
   permitida; chips de empresa filtrados; widgets grupo-only escondidos. (Backend 403 é a rede de segurança.)
 
+### Super-admin — gestão de usuários pela web (Iteração 4)
+- Coluna nova `cockpit_user.admin BOOLEAN NOT NULL DEFAULT FALSE` (migração idempotente
+  `ALTER TABLE ... ADD COLUMN IF NOT EXISTS admin ...`). **Super-admin** = master `admin` (sempre)
+  OU usuário da tabela com `admin=true`. `admin` é independente do escopo de empresas, mas a UI
+  de admin exige apenas a flag (não força `todas`).
+- `GET /api/session` passa a incluir **`admin` (bool)**.
+- Dependência `require_admin` (= `require_session` + `user.admin` senão **403**). Rotas `/api/admin/*`:
+  - `GET /api/admin/users` → `[{username, empresas: 'todas'|[slugs], ativo, admin, criado_em}]`
+    (NUNCA devolve hash; o master `admin` NÃO aparece na lista — é implícito/externo à tabela).
+  - `POST /api/admin/users` body `{username, empresas: 'todas'|[slugs]|csv, senha, admin?:false}`
+    → 201. Valida username (`^[a-z0-9][a-z0-9._-]{1,79}$`, minúsculo), rejeita duplicado (409) e
+    o reservado `admin` (400). Empresas: 'todas' ou subconjunto de slugs válidos (senão 400).
+    Senha mín. 8 chars (400 se curta).
+  - `PATCH /api/admin/users/{username}` body parcial `{empresas?, ativo?, admin?, senha?}` → 200.
+    Reset de senha, mudança de escopo, ativar/desativar, promover/rebaixar admin.
+  - **Trava anti-lockout (server-side, sempre):** o super-admin autenticado NÃO pode desativar a si
+    mesmo nem remover o próprio `admin` (409 "não é possível remover o próprio acesso de admin");
+    `admin` (master) é reservado e não é alvo de PATCH/POST (400). Mutações checam
+    `hmac.compare_digest`-nada — mas exigem sessão admin válida (cookie samesite=lax mitiga CSRF).
+  - Todas as respostas de erro em PT-BR no `detail`.
+- Front: rota `#/admin` + item de menu "Administração" (ícone engrenagem) **visível só p/ `session.admin`**.
+  Tela = tabela de usuários (usuário, empresas, status, admin, ações) + form "Novo usuário"
+  (username, multiselect de empresas ou "Todas", senha, checkbox admin) + ações por linha
+  (editar escopo, ativar/desativar, resetar senha via prompt). Router BLOQUEIA `#/admin` p/ não-admin
+  (redireciona p/ rota inicial). Backend 403 continua sendo a rede de segurança.
+
 ## Endpoints (todos GET, exceto login/snooze; `ano` default = último ano com dados)
 - `/api/health` → `{status, db}` — **aberto** (sem cookie; usado por smoke tests/monitoração)
 - `/api/empresas` → `[{slug, code, label, color}]` (+`grupo` não incluso)

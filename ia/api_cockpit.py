@@ -18,7 +18,7 @@ Todos os valores vêm do PostgreSQL cockpit_ref (NUNCA hardcoded — spec §6).
 Dinheiro: 2 casas. Percentuais: fração*100 com 1–2 casas.
 LGPD: folha NUNCA expõe salário exato — apenas faixa (banda) salarial.
 """
-import os, hmac, time, hashlib, pathlib, datetime
+import os, re, hmac, time, hashlib, pathlib, datetime
 from contextlib import contextmanager
 
 import psycopg2
@@ -123,6 +123,9 @@ CREATE TABLE IF NOT EXISTS cockpit_user (
     ativo      BOOLEAN NOT NULL DEFAULT TRUE,
     criado_em  TIMESTAMP NOT NULL DEFAULT NOW()
 );
+-- Iteração 4: super-admin (flag independente do escopo). Migração idempotente
+-- p/ DBs já existentes — ADD COLUMN IF NOT EXISTS não falha se já houver a coluna.
+ALTER TABLE cockpit_user ADD COLUMN IF NOT EXISTS admin BOOLEAN NOT NULL DEFAULT FALSE;
 CREATE TABLE IF NOT EXISTS fato_dre_tri_hist (
     id         SERIAL PRIMARY KEY,
     empresa_id INT NOT NULL REFERENCES dim_empresa(id),
@@ -222,15 +225,17 @@ def _token_usuario(token):
     return None
 
 
-def _escopo(usuario, empresas_csv):
-    """Monta o dict de sessão a partir do campo `empresas` da cockpit_user."""
+def _escopo(usuario, empresas_csv, admin=False):
+    """Monta o dict de sessão a partir do campo `empresas` da cockpit_user.
+    `admin` (Iteração 4) = flag super-admin, independente do escopo de empresas."""
     if (empresas_csv or "").strip().lower() == "todas":
-        return {"usuario": usuario, "empresas": None, "todas": True}
+        return {"usuario": usuario, "empresas": None, "todas": True, "admin": bool(admin)}
     slugs = {s.strip() for s in (empresas_csv or "").split(",") if s.strip() in BY_SLUG}
-    return {"usuario": usuario, "empresas": slugs, "todas": False}
+    return {"usuario": usuario, "empresas": slugs, "todas": False, "admin": bool(admin)}
 
 
-_MASTER = lambda u: {"usuario": u, "empresas": None, "todas": True}  # noqa: E731
+# master `admin` (COCKPIT_PASSWORD) — sempre super-admin + todas as empresas
+_MASTER = lambda u: {"usuario": u, "empresas": None, "todas": True, "admin": True}  # noqa: E731
 
 # Hash descartável p/ equalizar o CUSTO do login quando o usuário NÃO existe
 # (anti-enumeração por timing: caminho de erro roda scrypt igual ao de acerto).
@@ -255,10 +260,10 @@ def _carrega_usuario(usuario):
     with _conn() as con:
         cur = con.cursor()
         _ensure_tables(cur)
-        cur.execute("SELECT empresas FROM cockpit_user WHERE username=%s AND ativo",
+        cur.execute("SELECT empresas, admin FROM cockpit_user WHERE username=%s AND ativo",
                     [usuario])
         r = cur.fetchone()
-    return _escopo(usuario, r[0]) if r else None
+    return _escopo(usuario, r[0], r[1]) if r else None
 
 
 def require_session(request: Request):
@@ -309,7 +314,9 @@ class LoginBody(BaseModel):
 
 @router.post("/login", status_code=204)
 def login(body: LoginBody):
-    usuario = (body.usuario or "admin").strip() or "admin"
+    # minúsculo: usuários são criados/armazenados em lowercase (CLI + admin web);
+    # varchar do Postgres é case-sensitive → sem isto 'Maria' logaria 401.
+    usuario = (body.usuario or "admin").strip().lower() or "admin"
     if _dev_open():                       # dev local: aceita qualquer credencial
         resp = Response(status_code=204)  # cookie no MESMO Response retornado
         resp.set_cookie(COOKIE, _make_token(usuario), max_age=SESSION_TTL,
@@ -343,7 +350,16 @@ def login(body: LoginBody):
 @router.get("/session")
 def session(user=Depends(require_session)):
     return {"ok": True, "usuario": user["usuario"],
-            "empresas": "todas" if user["todas"] else sorted(user["empresas"])}
+            "empresas": "todas" if user["todas"] else sorted(user["empresas"]),
+            "admin": bool(user.get("admin"))}
+
+
+def require_admin(user=Depends(require_session)):
+    """Dependência das rotas /api/admin/* — exige sessão com flag super-admin.
+    Super-admin = master `admin` (sempre) OU usuário da tabela com admin=true."""
+    if not user.get("admin"):
+        raise HTTPException(status_code=403, detail="acesso restrito a super-admin")
+    return user
 
 
 @router.get("/health")
@@ -356,6 +372,144 @@ def health():
     except Exception:
         db_ok = False
     return {"status": "ok", "db": db_ok}
+
+
+# =============================================================================
+# Super-admin — gestão de usuários pela web (Iteração 4)
+# Contrato §"Super-admin — gestão de usuários pela web". require_admin = sessão
+# válida + flag super-admin; o master `admin` é reservado (fora da tabela).
+# =============================================================================
+# mesmo regex do CLI ia/cockpit_users.py (2–80 chars, minúsculo, começa com [a-z0-9])
+_USERNAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{1,79}$")
+
+
+def _normaliza_empresas_out(empresas_csv):
+    """Escopo armazenado -> forma de resposta: 'todas' OU lista ordenada de slugs válidos."""
+    if (empresas_csv or "").strip().lower() == "todas":
+        return "todas"
+    return sorted({s.strip() for s in (empresas_csv or "").split(",") if s.strip() in BY_SLUG})
+
+
+def _valida_empresas_in(empresas):
+    """Valida o escopo recebido do front (str 'todas'/csv OU lista de slugs).
+    Retorna o CSV a gravar ('todas' ou slugs em ordem canônica). HTTP 400 se inválido."""
+    if isinstance(empresas, str):
+        if empresas.strip().lower() == "todas":
+            return "todas"
+        itens = [s.strip() for s in empresas.split(",")]
+    elif isinstance(empresas, list):
+        if len(empresas) == 1 and str(empresas[0]).strip().lower() == "todas":
+            return "todas"
+        itens = [str(s).strip() for s in empresas]
+    else:
+        raise HTTPException(status_code=400, detail="empresas deve ser 'todas', lista ou CSV de slugs")
+    slugs = [s for s in itens if s]
+    if not slugs or any(s not in BY_SLUG for s in slugs):
+        raise HTTPException(status_code=400,
+                            detail="empresas inválidas — use 'todas' ou slugs válidos: "
+                                   + ", ".join(BY_SLUG))
+    # ordem canônica das EMPRESAS, sem duplicatas
+    return ",".join(e["slug"] for e in EMPRESAS if e["slug"] in set(slugs))
+
+
+def _valida_username_in(username):
+    """Normaliza (minúsculo) e valida o username; rejeita o reservado 'admin'. HTTP 400."""
+    u = (username or "").strip().lower()
+    if not _USERNAME_RE.fullmatch(u):
+        raise HTTPException(status_code=400,
+                            detail="username inválido — 2 a 80 chars [a-z 0-9 . _ -], "
+                                   "começando com letra/dígito")
+    if u == "admin":
+        raise HTTPException(status_code=400,
+                            detail="'admin' é o master (COCKPIT_PASSWORD) — reservado, não vive na tabela")
+    return u
+
+
+class AdminUserCreate(BaseModel):
+    username: str
+    empresas: object = "todas"     # str 'todas'/csv OU lista de slugs
+    senha: str
+    admin: bool = False
+
+
+class AdminUserPatch(BaseModel):
+    empresas: object | None = None
+    ativo: bool | None = None
+    admin: bool | None = None
+    senha: str | None = None
+
+
+@router.get("/admin/users")
+def admin_users_list(user=Depends(require_admin)):
+    """Lista usuários da cockpit_user (NUNCA devolve hash; master `admin` é externo à tabela)."""
+    with _conn() as con:
+        cur = con.cursor()
+        _ensure_tables(cur)
+        cur.execute("""SELECT username, empresas, ativo, admin, criado_em
+                       FROM cockpit_user ORDER BY username""")
+        rows = cur.fetchall()
+    return [{"username": u, "empresas": _normaliza_empresas_out(emp),
+             "ativo": bool(ativo), "admin": bool(adm),
+             "criado_em": criado.isoformat() if criado else None}
+            for u, emp, ativo, adm, criado in rows]
+
+
+@router.post("/admin/users", status_code=201)
+def admin_users_create(body: AdminUserCreate, user=Depends(require_admin)):
+    usuario = _valida_username_in(body.username)          # 400 se inválido/reservado
+    empresas = _valida_empresas_in(body.empresas)         # 400 se escopo inválido
+    if not body.senha or len(body.senha) < 8:
+        raise HTTPException(status_code=400, detail="senha deve ter ao menos 8 caracteres")
+    with _conn() as con:
+        cur = con.cursor()
+        _ensure_tables(cur)
+        cur.execute("SELECT 1 FROM cockpit_user WHERE username=%s", [usuario])
+        if cur.fetchone():
+            raise HTTPException(status_code=409, detail=f"usuário '{usuario}' já existe")
+        cur.execute("""INSERT INTO cockpit_user (username, senha_hash, empresas, admin)
+                       VALUES (%s, %s, %s, %s)""",
+                    [usuario, _hash_senha(body.senha), empresas, bool(body.admin)])
+    return {"ok": True}
+
+
+@router.patch("/admin/users/{username}")
+def admin_users_patch(username: str, body: AdminUserPatch, user=Depends(require_admin)):
+    alvo = (username or "").strip().lower()
+    if alvo == "admin":
+        raise HTTPException(status_code=400,
+                            detail="'admin' é o master (COCKPIT_PASSWORD) — reservado, não é alvo de edição")
+    sets, params = [], []
+    if body.empresas is not None:
+        sets.append("empresas=%s")
+        params.append(_valida_empresas_in(body.empresas))
+    if body.senha is not None:
+        if len(body.senha) < 8:
+            raise HTTPException(status_code=400, detail="senha deve ter ao menos 8 caracteres")
+        sets.append("senha_hash=%s")
+        params.append(_hash_senha(body.senha))
+    if body.ativo is not None:
+        # anti-lockout: o super-admin autenticado não pode desativar a si mesmo
+        if body.ativo is False and alvo == user["usuario"]:
+            raise HTTPException(status_code=409, detail="não é possível desativar o próprio usuário")
+        sets.append("ativo=%s")
+        params.append(bool(body.ativo))
+    if body.admin is not None:
+        # anti-lockout: o super-admin autenticado não pode remover o próprio admin
+        if body.admin is False and alvo == user["usuario"]:
+            raise HTTPException(status_code=409,
+                                detail="não é possível remover o próprio acesso de admin")
+        sets.append("admin=%s")
+        params.append(bool(body.admin))
+    if not sets:
+        raise HTTPException(status_code=400, detail="nada para atualizar — informe ao menos um campo")
+    with _conn() as con:
+        cur = con.cursor()
+        _ensure_tables(cur)
+        cur.execute(f"UPDATE cockpit_user SET {', '.join(sets)} WHERE username=%s",
+                    params + [alvo])
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail=f"usuário '{alvo}' não encontrado")
+    return {"ok": True}
 
 
 # =============================================================================
