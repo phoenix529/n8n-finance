@@ -571,6 +571,31 @@
     }
   });
 
+  /* ─── Logout ───
+     Apaga o cookie no servidor e RECARREGA a página: garante que nenhum dado
+     da sessão anterior (charts, state, drawers) sobreviva na memória do browser
+     — importante em máquina compartilhada. Recarregar cai no gate de login. */
+  CK.logout = async function () {
+    const btn = $('#btn-logout');
+    if (btn) btn.disabled = true;
+    try {
+      await fetch('/api/logout', { method: 'POST', credentials: 'same-origin' });
+    } catch (e) {
+      /* mesmo offline seguimos: o reload devolve ao gate de login */
+    } finally {
+      CK.state.autenticado = false;
+      CK.state.usuario = null;
+      CK.state.escopo = null;
+      CK.state.admin = false;
+      // sem hash → recarrega no gate de login (replace: não deixa "voltar" p/ a sessão)
+      window.location.replace(window.location.pathname);
+    }
+  };
+
+  $('#btn-logout') && $('#btn-logout').addEventListener('click', function () {
+    if (window.confirm('Deseja sair da sua sessão?')) CK.logout();
+  });
+
   /* ─── Init ─── */
   CK.init = async function () {
     try {

@@ -347,6 +347,17 @@ def login(body: LoginBody):
     return resp
 
 
+@router.post("/logout", status_code=204)
+def logout():
+    """Encerra a sessão apagando o cookie. Não exige sessão válida (logout de
+    cookie expirado deve funcionar). Os atributos precisam bater com os do
+    set_cookie do login, senão o browser não remove o cookie."""
+    resp = Response(status_code=204)
+    resp.delete_cookie(COOKIE, path="/", httponly=True, samesite="lax",
+                       secure=_cookie_secure())
+    return resp
+
+
 @router.get("/session")
 def session(user=Depends(require_session)):
     return {"ok": True, "usuario": user["usuario"],

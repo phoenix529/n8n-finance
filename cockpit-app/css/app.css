@@ -49,13 +49,18 @@ a { color: inherit; text-decoration: none; }
 /* SIDEBAR */
 .sidebar {
   width: 220px;
-  min-height: 100vh;
+  /* Gruda no viewport: sem isto o sidebar estica p/ a altura do DOCUMENTO e o
+     rodapé (user-pill + Sair) só aparece no fim de páginas longas. */
+  height: 100vh;
+  position: sticky;
+  top: 0;
+  align-self: flex-start;      /* não estica dentro do body flex — exigido p/ sticky */
+  overflow-y: auto;            /* nav longa em telas baixas rola dentro do sidebar */
   background: var(--bg-card);
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
-  position: relative;
 }
 .sidebar::before {
   content:'';
@@ -142,6 +147,18 @@ a { color: inherit; text-decoration: none; }
 }
 .user-info p { font-size:12px; font-weight:500; }
 .user-info span { font-size:10px; color:var(--text-3); }
+.user-pill .user-info { flex:1; min-width:0; }
+.btn-logout {
+  margin-left:auto; flex-shrink:0;
+  display:flex; align-items:center; justify-content:center;
+  width:28px; height:28px; padding:0;
+  background:transparent; border:1px solid var(--border);
+  border-radius:8px; color:var(--text-3); cursor:pointer;
+  transition: color .15s, border-color .15s, background .15s;
+}
+.btn-logout:hover { color:var(--red); border-color:var(--red); background:var(--bg-hover); }
+.btn-logout:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.btn-logout[disabled] { opacity:.5; cursor:progress; }
 
 /* MAIN */
 .main { flex:1; min-width:0; display:flex; flex-direction:column; }
@@ -589,7 +606,10 @@ select:focus { border-color: var(--border-acc); }
   .nav-item { justify-content: center; padding: 10px 0; margin: 2px 6px; }
   .nav-badge { position: absolute; top: 2px; right: 4px; margin-left: 0; }
   .sidebar-bottom { padding: 10px 8px; }
-  .user-pill { justify-content: center; padding: 8px 4px; }
+  /* sidebar colapsada (64px): empilha avatar sobre o botão Sair — lado a lado
+     estouraria a largura do trilho (32 + 28 + gap > 64). */
+  .user-pill { flex-direction: column; justify-content: center; padding: 8px 4px; gap: 8px; }
+  .btn-logout { margin-left: 0; }
 }
 
 /* ═══ Iteração 2 — seção "Análise DRE" (js/screens/dre_panels.js) ═══

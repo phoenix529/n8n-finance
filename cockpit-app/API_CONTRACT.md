@@ -25,7 +25,11 @@ Todos os valores vêm do PostgreSQL `cockpit_ref` (NUNCA hardcoded — spec §6 
   ativo bool default true, criado_em)`. **Master**: usuario `admin` + `COCKPIT_PASSWORD` → todas.
 - Cookie v2: `v2.<username>.<exp>.<hmac>` (HMAC-SHA256 sobre `username.exp`, secret derivado de
   COCKPIT_PASSWORD). Tokens no formato antigo são rejeitados (re-login).
-- `GET /api/session` → `{"ok": true, "usuario": "...", "empresas": ["viv", ...] | "todas"}` ou 401.
+- `GET /api/session` → `{"ok": true, "usuario": "...", "empresas": ["viv", ...] | "todas", "admin": bool}` ou 401.
+- `POST /api/logout` → 204 + apaga o cookie (`Max-Age=0`, mesmos atributos do login).
+  NÃO exige sessão válida (logout de cookie expirado funciona). Front: botão "Sair" no rodapé
+  da sidebar (sempre visível — sidebar é `position:sticky`), confirma e recarrega a página
+  via `location.replace(pathname)` (limpa charts/state e impede voltar à sessão pelo histórico).
 - **Enforcement SERVER-SIDE em todos os endpoints**: slug fora do escopo → **403**;
   `grupo`/consolidado (kpis/grupo, fees/grupo, folha/grupo, cascata/grupo, dre*/grupo,
   despesas/grupo, historico/grupo) → só usuários `todas` (o consolidado revela as outras);
