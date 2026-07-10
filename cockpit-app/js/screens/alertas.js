@@ -146,6 +146,9 @@
     var hm = (alertas && alertas.heatmap) || {};
     var meses = hm.meses || [];
     var empresas = hm.empresas || [];
+    // chip dinâmico: escopo parcial vê menos linhas que 5
+    var chip = el.querySelector('[data-ck="heatmap-chip"]');
+    if (chip) chip.textContent = empresas.length + ' × ' + (meses.length || 12);
     if (!meses.length || !empresas.length) {
       box.innerHTML = '<p class="empty-state">Sem dados mensais para o heatmap.</p>';
       return;
@@ -216,7 +219,7 @@
           '<div class="card-header"><div>' +
             '<div class="card-title">Heatmap — Resultado Líquido Mensal</div>' +
             '<div class="card-subtitle">Verde = positivo · Vermelho = negativo · intensidade = magnitude relativa da empresa · clique no nome para drill-down</div>' +
-          '</div><div class="chip blue">5 × 12</div></div>' +
+          '</div><div class="chip blue" data-ck="heatmap-chip">— × 12</div></div>' +
           '<div data-ck="heatmap"><p style="color:var(--text-3);font-size:12px;">Carregando…</p></div>' +
         '</div>';
 

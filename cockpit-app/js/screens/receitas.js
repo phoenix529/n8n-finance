@@ -84,13 +84,22 @@
     return a ? ((prefixo || '?') + 'ano=' + encodeURIComponent(a)) : '';
   }
 
-  // lista de empresas do registro global (sem o consolidado 'grupo')
+  // lista de empresas do registro global (sem o consolidado 'grupo'),
+  // RESTRITA ao escopo do usuário (RBAC — backend 403 é a rede de segurança)
   function listaEmpresas() {
     var raw = (window.CK && CK.EMPRESAS) || [];
     var arr = Array.isArray(raw) ? raw : Object.keys(raw).map(function (k) {
       var e = raw[k]; if (e && !e.slug) e.slug = k; return e;
     });
-    return arr.filter(function (e) { return e && e.slug && e.slug !== 'grupo'; });
+    return arr.filter(function (e) {
+      return e && e.slug && e.slug !== 'grupo' &&
+        (!window.CK || typeof CK.temAcesso !== 'function' || CK.temAcesso(e.slug));
+    });
+  }
+
+  // true se o usuário pode ver o consolidado ('Todas'/grupo)
+  function escopoTotal() {
+    return !window.CK || typeof CK.temAcesso !== 'function' || CK.temAcesso('grupo');
   }
 
   function pega(p) { return CK.api(p).catch(function () { return null; }); }
@@ -362,7 +371,9 @@
   function pintaChips(el, aoTrocar) {
     var wrap = el.querySelector('[data-ck="chips"]');
     if (!wrap) return;
-    var itens = [{ slug: 'grupo', label: 'Todas', color: '#D9DA00' }].concat(listaEmpresas());
+    // chip 'Todas' (consolidado) só p/ escopo total; demais chips = empresas permitidas
+    var itens = (escopoTotal() ? [{ slug: 'grupo', label: 'Todas', color: '#D9DA00' }] : [])
+      .concat(listaEmpresas());
     wrap.innerHTML = itens.map(function (e) {
       var ativo = e.slug === empresaSel;
       var cor = e.color || '#D9DA00';
@@ -409,7 +420,15 @@
     subtitle: 'Fees fixos vs variáveis · Drill-down por empresa e cliente',
     render: function (el) {
       destroiCharts();
-      empresaSel = 'grupo';
+      // default: consolidado p/ escopo total; senão 1ª empresa permitida.
+      // Escopo VAZIO (todas revogadas): empty-state — NUNCA cai no 'grupo' (403).
+      var permitidas = listaEmpresas();
+      if (!escopoTotal() && !permitidas.length) {
+        el.innerHTML = '<div class="empty-state">Seu usuário não tem empresas no escopo. ' +
+          'Fale com o administrador para liberar o acesso.</div>';
+        return;
+      }
+      empresaSel = escopoTotal() ? 'grupo' : permitidas[0].slug;
 
       el.innerHTML =
         // ── Curva ABC (largura total) ──
@@ -431,7 +450,7 @@
             '<div class="card-header"><div>' +
               '<div class="card-title">Fees Fixos vs Receita Variável por Empresa</div>' +
               '<div class="card-subtitle">Composição da receita bruta anual · fee fixo (sólido) + variável (translúcido)</div>' +
-            '</div><div class="chip accent">Grupo</div></div>' +
+            '</div><div class="chip accent">' + (escopoTotal() ? 'Grupo' : 'Meu escopo') + '</div></div>' +
             '<div class="chart-container" style="height:260px;" data-ck="fv-box">' +
               '<p style="color:var(--text-3);font-size:12px;">Carregando…</p>' +
             '</div>' +

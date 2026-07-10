@@ -28,9 +28,34 @@
   /* ─── Estado global ─── */
   CK.state = {
     ano: null,     // ano selecionado no topbar
-    anos: [],      // anos disponíveis (derivados de /api/historico/ref-plus)
+    anos: [],      // anos disponíveis (derivados de /api/historico/<1ª empresa permitida>)
     autenticado: false,
+    usuario: null, // username da sessão (RBAC — Iteração 3)
+    escopo: null,  // 'todas' | array de slugs permitidos | null (sessão sem RBAC → sem restrição no front)
   };
+
+  /* ─── RBAC por usuário (Iteração 3 do contrato) ───
+     O front só ESCONDE o que está fora do escopo — a rede de segurança
+     real é o 403 server-side em todos os endpoints. */
+  CK.temAcesso = function (slug) {
+    const escopo = CK.state.escopo;
+    if (escopo == null) return true;      // backend antigo/sessão sem RBAC — compat
+    if (escopo === 'todas') return true;
+    if (slug === 'grupo') return false;   // consolidado só p/ escopo total (revela as outras)
+    return Array.isArray(escopo) && escopo.indexOf(slug) !== -1;
+  };
+
+  // Empresas visíveis ao usuário, na ordem do registro (sem 'grupo')
+  CK.empresasPermitidas = function () {
+    return CK.EMPRESAS.filter(e => CK.temAcesso(e.slug));
+  };
+
+  // Rota inicial segura p/ o escopo: macro (total) → 1ª micro permitida → alertas
+  function rotaInicial() {
+    if (CK.temAcesso('grupo')) return 'macro';
+    const perm = CK.empresasPermitidas();
+    return perm.length ? 'micro/' + perm[0].slug : 'alertas';
+  }
 
   /* ─── Utilidades DOM ─── */
   const $ = sel => document.querySelector(sel);
@@ -81,13 +106,48 @@
     },
   };
 
+  /* ─── Aplicação do escopo na UI (sidebar + user-pill) ─── */
+  function aplicaEscopo(sess) {
+    CK.state.usuario = (sess && sess.usuario) || null;
+    const emp = sess ? sess.empresas : null;
+    if (emp === 'todas') CK.state.escopo = 'todas';
+    else if (Array.isArray(emp)) CK.state.escopo = emp;
+    else CK.state.escopo = null; // resposta sem campo empresas (backend antigo)
+
+    // Sidebar: esconde "Macro — Grupo" e micros fora do escopo.
+    // Receitas/Custos/Alertas ficam — as telas se adaptam ao escopo.
+    document.querySelectorAll('.nav-item[data-route]').forEach(el => {
+      const r = el.dataset.route;
+      let visivel = true;
+      if (r === 'macro') visivel = CK.temAcesso('grupo');
+      else if (r.indexOf('micro/') === 0) visivel = CK.temAcesso(r.slice(6));
+      el.style.display = visivel ? '' : 'none';
+    });
+
+    // User-pill: nome + resumo do escopo
+    const nome = $('#user-nome'), escopoEl = $('#user-escopo'), av = $('#user-avatar');
+    if (nome && escopoEl && av) {
+      if (CK.state.usuario) {
+        nome.textContent = CK.state.usuario;
+        av.textContent = CK.state.usuario.slice(0, 2).toUpperCase();
+      }
+      const e = CK.state.escopo;
+      if (e == null || e === 'todas') escopoEl.textContent = 'Acesso total';
+      else if (e.length === 1) {
+        const emp1 = CK.empresa(e[0]);
+        escopoEl.textContent = emp1 ? emp1.label : e[0];
+      } else escopoEl.textContent = e.length + ' empresas';
+    }
+  }
+
   /* ─── Login overlay ─── */
   function showLogin(msg) {
     const ov = $('#login-overlay');
     if (!ov) return;
     ov.hidden = false;
     if (msg) $('#login-msg').textContent = msg;
-    const inp = $('#login-senha');
+    const usu = $('#login-usuario');
+    const inp = (usu && !usu.value) ? usu : $('#login-senha');
     if (inp) setTimeout(() => inp.focus(), 50);
   }
   function hideLogin() {
@@ -348,6 +408,14 @@
 
   CK.route = function () {
     const route = parseHash();
+
+    // Guarda RBAC: macro (consolidado) ou micro fora do escopo → 1ª rota permitida.
+    // (Cobre também o hash default '#/macro' no load de usuário com escopo parcial.)
+    const negada =
+      (route.name === 'macro' && !CK.temAcesso('grupo')) ||
+      (route.name === 'micro' && !CK.temAcesso(route.params.slug));
+    if (negada) { location.hash = '#/' + rotaInicial(); return; } // hashchange re-roteia
+
     setActiveNav(route);
 
     const def = screens[route.name];
@@ -422,15 +490,32 @@
   };
 
   /* ─── Bootstrap pós-autenticação ─── */
-  async function afterLogin() {
+  // sess = payload de GET /api/session ({usuario, empresas}); se ausente, busca aqui
+  async function afterLogin(sess) {
+    if (!sess) {
+      try { sess = await CK.api('/api/session'); }
+      catch (e) { if (e && (e.status === 401 || e.status === 503)) return; sess = null; }
+    }
     CK.state.autenticado = true;
+    aplicaEscopo(sess);
     hideLogin();
 
-    // Lista de anos: contrato não tem /api/anos — deriva do histórico da REF+
+    // Lista de anos: contrato não tem /api/anos — deriva do histórico da 1ª empresa
+    // PERMITIDA (ref-plus daria 403 p/ usuário de escopo parcial sem REF+)
+    const perm = CK.empresasPermitidas();
+    if (!perm.length && Array.isArray(CK.state.escopo)) {
+      // escopo vazio: nenhuma chamada de dados (seria 403); defaults do ano
+      CK.state.ano = new Date().getFullYear();
+      CK.state.anos = [CK.state.ano];
+      populateAnoSelect();
+      CK.route();
+      return;
+    }
+    const slugHist = perm.length ? perm[0].slug : 'ref-plus';
     try {
       const [, hist] = await Promise.all([
         CK.api('/api/empresas').catch(() => null), // sanity-check; registro local é a fonte de cores
-        CK.api('/api/historico/ref-plus'),
+        CK.api('/api/historico/' + slugHist),
       ]);
       CK.state.anos = (hist.anos || []).map(a => a.ano).sort((a, b) => a - b);
       CK.state.ano = CK.state.anos.length ? CK.state.anos[CK.state.anos.length - 1] : new Date().getFullYear();
@@ -456,13 +541,16 @@
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ senha: $('#login-senha').value }),
+        body: JSON.stringify({
+          usuario: ($('#login-usuario') ? $('#login-usuario').value.trim() : ''),
+          senha: $('#login-senha').value,
+        }),
       });
       if (r.status === 204 || r.ok) {
         $('#login-senha').value = '';
-        await afterLogin();
+        await afterLogin(null); // busca /api/session p/ usuario + escopo
       } else if (r.status === 401) {
-        msg.textContent = 'Senha incorreta. Tente novamente.';
+        msg.textContent = 'Usuário ou senha incorretos. Tente novamente.';
       } else if (r.status === 503) {
         msg.textContent = 'Servidor sem senha configurada (COCKPIT_PASSWORD ausente). Contate o administrador.';
       } else {
@@ -478,8 +566,8 @@
   /* ─── Init ─── */
   CK.init = async function () {
     try {
-      await CK.api('/api/session'); // 401/503 → overlay via CK.api
-      await afterLogin();
+      const sess = await CK.api('/api/session'); // 401/503 → overlay via CK.api
+      await afterLogin(sess);
     } catch (e) {
       if (!e || (e.status !== 401 && e.status !== 503)) {
         console.error('CK.init:', e);

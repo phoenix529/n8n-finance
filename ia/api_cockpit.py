@@ -4,9 +4,14 @@
 api_cockpit.py — API REST do Cockpit Financeiro Grupo REF (v1).
 Implementa EXATAMENTE o contrato de cockpit-app/API_CONTRACT.md:
   - registro de empresas (slug ↔ codigo dim_empresa ↔ cor);
-  - auth por cookie httpOnly `ck_session` (HMAC assinado, 12h) contra
-    COCKPIT_PASSWORD do .env — sem senha definida a API fica FECHADA (503);
-    COCKPIT_DEV_OPEN=1 desativa a auth (somente dev local);
+  - auth + RBAC por usuário (Iteração 3): cookie httpOnly `ck_session` v2
+    (`v2.<username>.<exp>.<hmac>`, 12h) assinado com secret derivado de
+    COCKPIT_PASSWORD — sem senha definida a API fica FECHADA (503);
+    master = usuario `admin` + COCKPIT_PASSWORD (todas as empresas);
+    demais usuários na tabela cockpit_user (scrypt, escopo CSV de slugs|'todas');
+    enforcement SERVER-SIDE: slug fora do escopo → 403; `grupo` só p/ 'todas';
+    COCKPIT_DEV_OPEN=1 desativa a auth (somente dev local) e
+    COCKPIT_DEV_USER=<username> simula o escopo desse usuário;
   - endpoints /api/* (kpis, dre, historico, fees, receita-var, folha, alertas);
   - regras de alerta A01–A10 (briefing §4) com snooze em cockpit_alert_snooze.
 Todos os valores vêm do PostgreSQL cockpit_ref (NUNCA hardcoded — spec §6).
@@ -110,6 +115,14 @@ CREATE TABLE IF NOT EXISTS cockpit_alert_snooze (
     alert_id VARCHAR(40) PRIMARY KEY,
     ate      DATE NOT NULL
 );
+CREATE TABLE IF NOT EXISTS cockpit_user (
+    id         SERIAL PRIMARY KEY,
+    username   VARCHAR(80)  NOT NULL UNIQUE,
+    senha_hash VARCHAR(200) NOT NULL,          -- scrypt: hex(salt)$hex(hash)
+    empresas   VARCHAR(200) NOT NULL,          -- CSV de slugs OU 'todas'
+    ativo      BOOLEAN NOT NULL DEFAULT TRUE,
+    criado_em  TIMESTAMP NOT NULL DEFAULT NOW()
+);
 CREATE TABLE IF NOT EXISTS fato_dre_tri_hist (
     id         SERIAL PRIMARY KEY,
     empresa_id INT NOT NULL REFERENCES dim_empresa(id),
@@ -146,10 +159,14 @@ def _pct(num, den, nd=1):
 
 
 # =============================================================================
-# Autenticação — cookie httpOnly `ck_session` assinado com HMAC (12h)
+# Autenticação + RBAC — cookie httpOnly `ck_session` v2 assinado com HMAC (12h)
+# Contrato §"Autenticação + RBAC por usuário (Iteração 3)".
 # =============================================================================
 SESSION_TTL = 12 * 3600
 COOKIE = "ck_session"
+# Parâmetros do scrypt (hash de senha da tabela cockpit_user) — mesmos do CLI
+# ia/cockpit_users.py. Formato armazenado: hex(salt)$hex(hash).
+_SCRYPT = dict(n=2 ** 14, r=8, p=1)
 
 
 def _password():
@@ -161,60 +178,172 @@ def _dev_open():
 
 
 def _secret():
-    # segredo derivado da senha (não guarda a senha em claro no token)
+    # segredo derivado da senha master (não guarda a senha em claro no token)
     return hashlib.sha256(("ck-session-v1:" + _password()).encode("utf-8")).digest()
 
 
-def _make_token():
-    exp = str(int(time.time()) + SESSION_TTL)
-    sig = hmac.new(_secret(), exp.encode(), hashlib.sha256).hexdigest()
-    return f"{exp}.{sig}"
+def _hash_senha(senha, salt=None):
+    """Hash scrypt da senha → 'hex(salt)$hex(hash)' (formato da cockpit_user)."""
+    salt = salt if salt is not None else os.urandom(16)
+    h = hashlib.scrypt(senha.encode("utf-8"), salt=salt, **_SCRYPT)
+    return salt.hex() + "$" + h.hex()
 
 
-def _token_valid(token):
+def _senha_confere(senha, armazenado):
+    """Verifica senha contra o hash armazenado (comparação em tempo constante)."""
     try:
-        exp, sig = token.split(".", 1)
-        good = hmac.new(_secret(), exp.encode(), hashlib.sha256).hexdigest()
-        return hmac.compare_digest(sig, good) and int(exp) > time.time()
+        salt_hex, _hash_hex = armazenado.split("$", 1)
+        calc = _hash_senha(senha, bytes.fromhex(salt_hex))
+        return hmac.compare_digest(calc, armazenado)
     except Exception:
         return False
 
 
+def _make_token(usuario):
+    """Token v2: `v2.<username>.<exp>.<hmac(username.exp)>`."""
+    exp = str(int(time.time()) + SESSION_TTL)
+    sig = hmac.new(_secret(), f"{usuario}.{exp}".encode("utf-8"), hashlib.sha256).hexdigest()
+    return f"v2.{usuario}.{exp}.{sig}"
+
+
+def _token_usuario(token):
+    """username do token v2 se válido; None caso contrário.
+    Tokens no formato ANTIGO (`<exp>.<sig>`, sem prefixo v2) são rejeitados → re-login."""
+    try:
+        if not token.startswith("v2."):
+            return None
+        # rsplit: exp/sig não contêm '.', então usernames com '.' continuam válidos
+        usuario, exp, sig = token[3:].rsplit(".", 2)
+        good = hmac.new(_secret(), f"{usuario}.{exp}".encode("utf-8"), hashlib.sha256).hexdigest()
+        if usuario and hmac.compare_digest(sig, good) and int(exp) > time.time():
+            return usuario
+    except Exception:
+        pass
+    return None
+
+
+def _escopo(usuario, empresas_csv):
+    """Monta o dict de sessão a partir do campo `empresas` da cockpit_user."""
+    if (empresas_csv or "").strip().lower() == "todas":
+        return {"usuario": usuario, "empresas": None, "todas": True}
+    slugs = {s.strip() for s in (empresas_csv or "").split(",") if s.strip() in BY_SLUG}
+    return {"usuario": usuario, "empresas": slugs, "todas": False}
+
+
+_MASTER = lambda u: {"usuario": u, "empresas": None, "todas": True}  # noqa: E731
+
+# Hash descartável p/ equalizar o CUSTO do login quando o usuário NÃO existe
+# (anti-enumeração por timing: caminho de erro roda scrypt igual ao de acerto).
+_DUMMY_HASH = None
+
+
+def _dummy_hash():
+    global _DUMMY_HASH
+    if _DUMMY_HASH is None:
+        _DUMMY_HASH = _hash_senha("equalizador-de-timing-nao-e-senha")
+    return _DUMMY_HASH
+
+
+def _cookie_secure():
+    # Secure por default (produção é HTTPS); COCKPIT_COOKIE_SECURE=0 só p/ dev http
+    return os.environ.get("COCKPIT_COOKIE_SECURE", "1") != "0"
+
+
+def _carrega_usuario(usuario):
+    """Escopo do usuário ATIVO na cockpit_user (consultado a cada request para
+    que `disable`/mudança de escopo valham imediatamente). None se não existe."""
+    with _conn() as con:
+        cur = con.cursor()
+        _ensure_tables(cur)
+        cur.execute("SELECT empresas FROM cockpit_user WHERE username=%s AND ativo",
+                    [usuario])
+        r = cur.fetchone()
+    return _escopo(usuario, r[0]) if r else None
+
+
 def require_session(request: Request):
-    """Dependência aplicada a TODOS os /api/* exceto /api/login e /api/health."""
+    """Dependência de TODOS os /api/* exceto /api/login e /api/health.
+    Retorna {usuario, empresas: set(slugs) | None p/ todas, todas: bool}."""
     if _dev_open():
-        return
+        dev_user = os.environ.get("COCKPIT_DEV_USER", "").strip()
+        if dev_user:                       # simula o escopo do usuário da tabela
+            u = _carrega_usuario(dev_user)
+            if not u:                      # fail-closed: typo NÃO escala p/ master
+                raise HTTPException(status_code=403,
+                                    detail=f"COCKPIT_DEV_USER '{dev_user}' inexistente/inativo")
+            return u
+        return _MASTER("dev")              # sem DEV_USER: master (todas)
     if not _password():
         raise HTTPException(status_code=503, detail="COCKPIT_PASSWORD não configurada — API fechada")
-    tok = request.cookies.get(COOKIE, "")
-    if not _token_valid(tok):
+    usuario = _token_usuario(request.cookies.get(COOKIE, ""))
+    if not usuario:
         raise HTTPException(status_code=401, detail="sessão ausente ou expirada")
+    if usuario == "admin":                 # master: todas as empresas
+        return _MASTER("admin")
+    u = _carrega_usuario(usuario)
+    if not u:                              # desativado/removido após o login
+        raise HTTPException(status_code=401, detail="usuário inativo — refaça o login")
+    return u
+
+
+def _autoriza(slug, user):
+    """403 se o slug está fora do escopo do usuário. `grupo` (consolidado revela
+    as outras empresas) exige escopo 'todas'. Contrato §RBAC."""
+    if user["todas"]:
+        return
+    if slug == "grupo" or slug not in user["empresas"]:
+        raise HTTPException(status_code=403, detail=f"acesso negado à empresa: {slug}")
+
+
+def _empresas_do_usuario(user):
+    """Sub-lista de EMPRESAS visível ao usuário (ordem canônica preservada)."""
+    if user["todas"]:
+        return EMPRESAS
+    return [e for e in EMPRESAS if e["slug"] in user["empresas"]]
 
 
 class LoginBody(BaseModel):
     senha: str
+    usuario: str = "admin"    # opcional — default mantém compat com o front antigo
 
 
 @router.post("/login", status_code=204)
 def login(body: LoginBody):
-    if _dev_open():                       # dev local: aceita qualquer senha
+    usuario = (body.usuario or "admin").strip() or "admin"
+    if _dev_open():                       # dev local: aceita qualquer credencial
         resp = Response(status_code=204)  # cookie no MESMO Response retornado
-        resp.set_cookie(COOKIE, _make_token(), max_age=SESSION_TTL,
-                        httponly=True, samesite="lax", path="/")
+        resp.set_cookie(COOKIE, _make_token(usuario), max_age=SESSION_TTL,
+                        httponly=True, samesite="lax", path="/", secure=_cookie_secure())
         return resp
     if not _password():
         raise HTTPException(status_code=503, detail="COCKPIT_PASSWORD não configurada — API fechada")
-    if not hmac.compare_digest(body.senha, _password()):
-        raise HTTPException(status_code=401, detail="senha inválida")
+    if usuario == "admin":                # master: admin + COCKPIT_PASSWORD → todas
+        ok = hmac.compare_digest(body.senha, _password())
+    else:                                 # demais: usuário ATIVO da cockpit_user
+        with _conn() as con:
+            cur = con.cursor()
+            _ensure_tables(cur)
+            cur.execute("SELECT senha_hash FROM cockpit_user WHERE username=%s AND ativo",
+                        [usuario])
+            r = cur.fetchone()
+        if r:
+            ok = _senha_confere(body.senha, r[0])
+        else:
+            _senha_confere(body.senha, _dummy_hash())   # equaliza timing (anti-enumeração)
+            ok = False
+    if not ok:
+        time.sleep(0.4)                   # freio anti força-bruta
+        raise HTTPException(status_code=401, detail="usuário ou senha inválidos")
     resp = Response(status_code=204)
-    resp.set_cookie(COOKIE, _make_token(), max_age=SESSION_TTL,
-                    httponly=True, samesite="lax", path="/")
+    resp.set_cookie(COOKIE, _make_token(usuario), max_age=SESSION_TTL,
+                    httponly=True, samesite="lax", path="/", secure=_cookie_secure())
     return resp
 
 
 @router.get("/session")
-def session(_=Depends(require_session)):
-    return {"ok": True}
+def session(user=Depends(require_session)):
+    return {"ok": True, "usuario": user["usuario"],
+            "empresas": "todas" if user["todas"] else sorted(user["empresas"])}
 
 
 @router.get("/health")
@@ -325,12 +454,13 @@ def _folha_mes_total(cur, emp, ano, mes):
 # Endpoints de dados
 # =============================================================================
 @router.get("/empresas")
-def empresas(_=Depends(require_session)):
-    return EMPRESAS
+def empresas(user=Depends(require_session)):
+    return _empresas_do_usuario(user)      # RBAC: só as empresas permitidas
 
 
 @router.get("/kpis/grupo")
-def kpis_grupo(ano: int | None = None, _=Depends(require_session)):
+def kpis_grupo(ano: int | None = None, user=Depends(require_session)):
+    _autoriza("grupo", user)               # consolidado exige escopo 'todas'
     with _conn() as con:
         cur = con.cursor()
         _ensure_tables(cur)
@@ -368,8 +498,9 @@ def kpis_grupo(ano: int | None = None, _=Depends(require_session)):
 
 
 @router.get("/kpis/{slug}")
-def kpis_empresa(slug: str, ano: int | None = None, _=Depends(require_session)):
+def kpis_empresa(slug: str, ano: int | None = None, user=Depends(require_session)):
     emp = _slug_or_404(slug, allow_grupo=False)
+    _autoriza(slug, user)
     with _conn() as con:
         cur = con.cursor()
         ano = ano or _ano_default(cur)
@@ -388,8 +519,9 @@ def kpis_empresa(slug: str, ano: int | None = None, _=Depends(require_session)):
 
 
 @router.get("/dre/mensal/{slug}")
-def dre_mensal(slug: str, ano: int | None = None, _=Depends(require_session)):
+def dre_mensal(slug: str, ano: int | None = None, user=Depends(require_session)):
     emp = _slug_or_404(slug)
+    _autoriza(slug, user)
     with _conn() as con:
         cur = con.cursor()
         ano = ano or _ano_default(cur)
@@ -418,8 +550,9 @@ def dre_mensal(slug: str, ano: int | None = None, _=Depends(require_session)):
 
 
 @router.get("/dre/trimestral/{slug}")
-def dre_trimestral(slug: str, ano: int | None = None, _=Depends(require_session)):
+def dre_trimestral(slug: str, ano: int | None = None, user=Depends(require_session)):
     emp = _slug_or_404(slug)
+    _autoriza(slug, user)
     with _conn() as con:
         cur = con.cursor()
         ano = ano or _ano_default(cur)
@@ -482,10 +615,11 @@ def dre_trimestral(slug: str, ano: int | None = None, _=Depends(require_session)
 
 @router.get("/cascata/{slug}")
 def cascata(slug: str, ano: int | None = None, ate: int | None = None,
-            _=Depends(require_session)):
+            user=Depends(require_session)):
     """Cascata (waterfall) da DRE — Iteração 2. `ate` = só meses <= ate (semestre realizado).
     Convenção de sinais: custos/despesas gravados POSITIVOS no banco -> deltas NEGATIVOS."""
     emp = _slug_or_404(slug)
+    _autoriza(slug, user)
     if ate is not None and not 1 <= ate <= 12:
         raise HTTPException(status_code=422, detail="ate deve estar entre 1 e 12")
     with _conn() as con:
@@ -527,9 +661,10 @@ def cascata(slug: str, ano: int | None = None, ate: int | None = None,
 
 
 @router.get("/despesas/{slug}")
-def despesas(slug: str, ano: int | None = None, _=Depends(require_session)):
+def despesas(slug: str, ano: int | None = None, user=Depends(require_session)):
     """Despesas mensais + ranking anual por conta (pct sobre o total de despesas) — Iteração 2."""
     emp = _slug_or_404(slug)
+    _autoriza(slug, user)
     with _conn() as con:
         cur = con.cursor()
         ano = ano or _ano_default(cur)
@@ -549,8 +684,9 @@ def despesas(slug: str, ano: int | None = None, _=Depends(require_session)):
 
 
 @router.get("/historico/{slug}")
-def historico(slug: str, _=Depends(require_session)):
+def historico(slug: str, user=Depends(require_session)):
     emp = _slug_or_404(slug)
+    _autoriza(slug, user)
     ef, ep = _emp_where(emp)
     with _conn() as con:
         cur = con.cursor()
@@ -568,8 +704,9 @@ def historico(slug: str, _=Depends(require_session)):
 
 
 @router.get("/fees/{slug}")
-def fees(slug: str, ano: int | None = None, _=Depends(require_session)):
+def fees(slug: str, ano: int | None = None, user=Depends(require_session)):
     emp = _slug_or_404(slug)
+    _autoriza(slug, user)
     with _conn() as con:
         cur = con.cursor()
         _ensure_tables(cur)
@@ -597,8 +734,9 @@ def fees(slug: str, ano: int | None = None, _=Depends(require_session)):
 
 
 @router.get("/receita-var/{slug}")
-def receita_var(slug: str, ano: int | None = None, _=Depends(require_session)):
+def receita_var(slug: str, ano: int | None = None, user=Depends(require_session)):
     emp = _slug_or_404(slug)
+    _autoriza(slug, user)
     ef, ep = _emp_where(emp)
     with _conn() as con:
         cur = con.cursor()
@@ -627,8 +765,10 @@ def _faixa_salarial(valor):
 
 
 @router.get("/folha/{slug}")
-def folha(slug: str, ano: int | None = None, mes: int | None = None, _=Depends(require_session)):
+def folha(slug: str, ano: int | None = None, mes: int | None = None,
+          user=Depends(require_session)):
     emp = _slug_or_404(slug)
+    _autoriza(slug, user)
     is_grupo = emp["code"] is None
     ef, ep = _emp_where(emp)
     with _conn() as con:
@@ -687,9 +827,11 @@ def folha(slug: str, ano: int | None = None, mes: int | None = None, _=Depends(r
 # =============================================================================
 # Alertas A01–A10 (briefing §4) — avaliados no ano corrente (default do dado)
 # =============================================================================
-def _avaliar_alertas(cur, ano):
-    """Avalia A01–A10 para cada empresa. Retorna (criticos, atencao)."""
+def _avaliar_alertas(cur, ano, emps=None):
+    """Avalia A01–A10 para cada empresa de `emps` (default: todas).
+    RBAC: o chamador passa só as empresas do escopo do usuário. Retorna (criticos, atencao)."""
     criticos, atencao = [], []
+    emps = EMPRESAS if emps is None else emps
 
     def add(lista, regra, emp, titulo, detalhe, acao):
         lista.append({"id": f"{regra}:{emp['slug']}", "regra": regra,
@@ -700,7 +842,7 @@ def _avaliar_alertas(cur, ano):
         s = f"R$ {abs(v):,.0f}".replace(",", ".")
         return ("-" + s) if v < 0 else s
 
-    for emp in EMPRESAS:
+    for emp in emps:
         dre = _dre_ano(cur, emp, ano)
         prev = _dre_ano(cur, emp, ano - 1)
         pm = _dre_mensal(cur, emp, ano)
@@ -797,25 +939,29 @@ def _avaliar_alertas(cur, ano):
 
 
 @router.get("/alertas")
-def alertas(ano: int | None = None, _=Depends(require_session)):
+def alertas(ano: int | None = None, user=Depends(require_session)):
+    emps = _empresas_do_usuario(user)      # RBAC: avalia SÓ as empresas do escopo
     with _conn() as con:
         cur = con.cursor()
         _ensure_tables(cur)
         ano = ano or _ano_default(cur)
-        criticos, atencao = _avaliar_alertas(cur, ano)
+        criticos, atencao = _avaliar_alertas(cur, ano, emps)
 
-        # snoozed: somem do badge mas continuam no log (frontend filtra)
+        # snoozed: somem do badge mas continuam no log (frontend filtra);
+        # RBAC: só ids de alertas de empresas no escopo (id = "A03:viv")
         cur.execute("SELECT alert_id FROM cockpit_alert_snooze WHERE ate >= CURRENT_DATE")
-        snoozed = [r[0] for r in cur.fetchall()]
+        permitidos = {e["slug"] for e in emps}
+        snoozed = [r[0] for r in cur.fetchall()
+                   if r[0].split(":", 1)[-1] in permitidos]
 
-        # semáforo por empresa
+        # semáforo por empresa (só as do escopo)
         crit_por_emp = {a["empresa_slug"] for a in criticos}
         aten_por_emp = {a["empresa_slug"] for a in atencao}
         primeiro = {}
         for a in criticos + atencao:
             primeiro.setdefault(a["empresa_slug"], a["titulo"])
         semaforo = []
-        for e in EMPRESAS:
+        for e in emps:
             if e["slug"] in crit_por_emp:
                 status = "critico"
             elif e["slug"] in aten_por_emp:
@@ -826,9 +972,9 @@ def alertas(ano: int | None = None, _=Depends(require_session)):
                              "status": status,
                              "motivo": primeiro.get(e["slug"], "Sem alertas ativos")})
 
-        # heatmap 5 x 12 de resultado líquido mensal
+        # heatmap N x 12 de resultado líquido mensal (N = empresas do escopo)
         heat_emp = []
-        for e in EMPRESAS:
+        for e in emps:
             pm = _dre_mensal(cur, e, ano)
             heat_emp.append({"slug": e["slug"], "label": e["label"],
                              "valores": [_money(pm.get(m, {}).get(RLIQ)) for m in range(1, 13)]})
@@ -843,9 +989,12 @@ class SnoozeBody(BaseModel):
 
 
 @router.post("/alertas/{alert_id}/snooze", status_code=204)
-def snooze(alert_id: str, body: SnoozeBody, _=Depends(require_session)):
+def snooze(alert_id: str, body: SnoozeBody, user=Depends(require_session)):
     if body.dias < 1 or body.dias > 365:
         raise HTTPException(status_code=422, detail="dias deve estar entre 1 e 365")
+    # RBAC: id do alerta = "A03:viv" — snooze só de empresas no escopo do usuário
+    slug_alerta = alert_id.split(":", 1)[-1] if ":" in alert_id else ""
+    _autoriza(slug_alerta, user)
     with _conn() as con:
         cur = con.cursor()
         _ensure_tables(cur)

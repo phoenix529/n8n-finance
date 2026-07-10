@@ -53,10 +53,10 @@
 
   <div class="sidebar-bottom">
     <div class="user-pill">
-      <div class="avatar">CR</div>
+      <div class="avatar" id="user-avatar">—</div>
       <div class="user-info">
-        <p>C-Level</p>
-        <span>Acesso total</span>
+        <p id="user-nome">Cockpit</p>
+        <span id="user-escopo">—</span>
       </div>
     </div>
   </div>
@@ -86,9 +86,13 @@
 
 <!-- LOGIN OVERLAY -->
 <div class="login-overlay" id="login-overlay" hidden>
-  <form class="login-card" id="login-form" autocomplete="off">
+  <form class="login-card" id="login-form">
     <div class="logo-mark">Grupo REF</div>
     <div class="logo-sub" style="margin-bottom:20px;">Cockpit Financeiro</div>
+    <label class="login-label" for="login-usuario">Usuário</label>
+    <input class="login-input" id="login-usuario" type="text" name="usuario"
+           placeholder="usuário" autocomplete="username" autocapitalize="none"
+           spellcheck="false" required>
     <label class="login-label" for="login-senha">Senha de acesso</label>
     <input class="login-input" id="login-senha" type="password" name="senha"
            placeholder="••••••••" autocomplete="current-password" required>

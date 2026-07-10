@@ -9,7 +9,8 @@
   'use strict';
 
   var charts = [];
-  var mesSel = null; // mês selecionado (default = mais recente com folha, vindo da API)
+  var mesSel = null;      // mês selecionado (default = mais recente com folha, vindo da API)
+  var empresaSelC = null; // empresa selecionada (só p/ escopo parcial — RBAC)
 
   var MESES = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
 
@@ -84,12 +85,22 @@
     return a ? ((prefixo || '?') + 'ano=' + encodeURIComponent(a)) : '';
   }
 
+  // empresas do registro global (sem 'grupo'), RESTRITAS ao escopo do usuário
+  // (RBAC — o 403 server-side é a rede de segurança)
   function listaEmpresas() {
     var raw = (window.CK && CK.EMPRESAS) || [];
     var arr = Array.isArray(raw) ? raw : Object.keys(raw).map(function (k) {
       var e = raw[k]; if (e && !e.slug) e.slug = k; return e;
     });
-    return arr.filter(function (e) { return e && e.slug && e.slug !== 'grupo'; });
+    return arr.filter(function (e) {
+      return e && e.slug && e.slug !== 'grupo' &&
+        (!window.CK || typeof CK.temAcesso !== 'function' || CK.temAcesso(e.slug));
+    });
+  }
+
+  // true se o usuário pode ver o consolidado do grupo
+  function escopoTotal() {
+    return !window.CK || typeof CK.temAcesso !== 'function' || CK.temAcesso('grupo');
   }
   function pega(p) { return CK.api(p).catch(function () { return null; }); }
 
@@ -294,6 +305,39 @@
       '</div>';
   }
 
+  /* ── KPIs de UMA empresa (escopo parcial — sem widgets grupo-only) ── */
+  function pintaKpisEmpresa(el, empresa, folha) {
+    var row = el.querySelector('[data-ck="kpis"]');
+    if (!row) return;
+    row.style.gridTemplateColumns = 'repeat(3,1fr)'; // 3 cards (ratio grupo-only escondido)
+    if (!folha) {
+      row.innerHTML = '<div class="kpi-card red"><div class="kpi-label">Erro</div>' +
+        '<div class="kpi-compare">Falha ao carregar a folha de ' + esc((empresa && empresa.label) || '') + '.</div></div>';
+      return;
+    }
+    var hc = n(folha.headcount);
+    var medio = folha.custo_medio != null ? n(folha.custo_medio) : (hc ? n(folha.total) / hc : 0);
+    row.innerHTML =
+      '<div class="kpi-card accent">' +
+        '<div class="kpi-icon accent" aria-hidden="true">💰</div>' +
+        '<div class="kpi-label">Total Folha — ' + esc((empresa && empresa.label) || '') + '</div>' +
+        '<div class="kpi-value">' + fmtMoeda(folha.total) + '</div>' +
+        '<div class="kpi-compare">' + MESES[(n(folha.mes) - 1 + 12) % 12] + '/' + esc(folha.ano) + ' · por mês</div>' +
+      '</div>' +
+      '<div class="kpi-card blue">' +
+        '<div class="kpi-icon blue" aria-hidden="true">👥</div>' +
+        '<div class="kpi-label">Total Funcionários</div>' +
+        '<div class="kpi-value">' + hc.toLocaleString('pt-BR') + '</div>' +
+        '<div class="kpi-compare">pessoas na empresa</div>' +
+      '</div>' +
+      '<div class="kpi-card green">' +
+        '<div class="kpi-icon green" aria-hidden="true">⚖️</div>' +
+        '<div class="kpi-label">Custo médio/func.</div>' +
+        '<div class="kpi-value">' + fmtMoeda(medio) + '</div>' +
+        '<div class="kpi-compare">folha ÷ headcount no mês</div>' +
+      '</div>';
+  }
+
   /* ── treemap CSS: empresa (largura ∝ total) → depto (altura) ── */
   function pintaTreemap(el, folhas, comparativo) {
     var box = el.querySelector('[data-ck="treemap"]');
@@ -474,9 +518,27 @@
     render: function (el) {
       destroiCharts();
 
+      // RBAC: escopo parcial usa /api/folha/<slug> (grupo = 403) e esconde widgets grupo-only
+      var total = escopoTotal();
+      var permitidas = listaEmpresas();
+      if (!total) {
+        var aindaVale = permitidas.some(function (e) { return e.slug === empresaSelC; });
+        empresaSelC = aindaVale ? empresaSelC : ((permitidas[0] || {}).slug || null);
+      }
+
+      if (!total && !empresaSelC) {
+        // escopo sem nenhuma empresa — nada a mostrar nesta tela
+        el.innerHTML = '<div class="empty-state">Seu usuário não tem empresas com folha no escopo.</div>';
+        return;
+      }
+
       el.innerHTML =
-        // seletor de mês (default = mais recente com folha carregada)
-        '<div style="display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-bottom:16px;">' +
+        // filtros: empresa (só escopo parcial com >1 permitida) + mês da folha
+        '<div style="display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-bottom:16px;flex-wrap:wrap;">' +
+          (!total && permitidas.length > 1
+            ? '<span class="filter-label">Empresa</span>' +
+              '<select data-ck="emp-select" aria-label="Filtro de empresa da folha"></select>'
+            : '') +
           '<span class="filter-label">Mês da folha</span>' +
           '<select data-ck="mes-select" aria-label="Filtro de mês da folha"><option value="">Carregando…</option></select>' +
         '</div>' +
@@ -489,30 +551,48 @@
           '<div class="chart-card">' +
             '<div class="card-header"><div>' +
               '<div class="card-title">Distribuição Folha por Empresa e Departamento</div>' +
-              '<div class="card-subtitle">Hierarquia Grupo → Empresa → Área · clique num departamento para o drill-down</div>' +
+              '<div class="card-subtitle">' + (total
+                ? 'Hierarquia Grupo → Empresa → Área · clique num departamento para o drill-down'
+                : 'Hierarquia Empresa → Área (empresas do seu escopo) · clique num departamento para o drill-down') + '</div>' +
             '</div><div class="chip accent">Treemap</div></div>' +
             '<div data-ck="treemap"><p style="color:var(--text-3);font-size:12px;">Carregando…</p></div>' +
           '</div>' +
           '<div class="chart-card">' +
             '<div class="card-header"><div>' +
-              '<div class="card-title">Custo por Departamento — maior empresa do mês</div>' +
+              '<div class="card-title">Custo por Departamento — ' + (total ? 'maior empresa do mês' : 'empresa selecionada') + '</div>' +
               '<div class="card-subtitle">Bolha = headcount · clique numa linha para detalhe e comparação</div>' +
             '</div><div class="chip accent" data-ck="deptos-chip">—</div></div>' +
             '<div data-ck="deptos"><p style="color:var(--text-3);font-size:12px;">Carregando…</p></div>' +
           '</div>' +
         '</div>' +
 
-        '<div class="chart-card">' +
-          '<div class="card-header"><div>' +
-            '<div class="card-title">Folha / Receita Bruta por Empresa</div>' +
-            '<div class="card-subtitle">Percentual da folha mensal sobre a receita do mês · linha de referência em 20%</div>' +
-          '</div><div class="chip blue">Grupo</div></div>' +
-          '<div class="chart-container" style="height:220px;" data-ck="ratio-box">' +
-            '<p style="color:var(--text-3);font-size:12px;">Carregando…</p>' +
-          '</div>' +
-        '</div>';
+        // widget GRUPO-only: ratio folha/receita por empresa (some no escopo parcial)
+        (total
+          ? '<div class="chart-card">' +
+              '<div class="card-header"><div>' +
+                '<div class="card-title">Folha / Receita Bruta por Empresa</div>' +
+                '<div class="card-subtitle">Percentual da folha mensal sobre a receita do mês · linha de referência em 20%</div>' +
+              '</div><div class="chip blue">Grupo</div></div>' +
+              '<div class="chart-container" style="height:220px;" data-ck="ratio-box">' +
+                '<p style="color:var(--text-3);font-size:12px;">Carregando…</p>' +
+              '</div>' +
+            '</div>'
+          : '');
 
       var sel = el.querySelector('[data-ck="mes-select"]');
+
+      // seletor de empresa (escopo parcial com mais de uma permitida)
+      var selEmp = el.querySelector('[data-ck="emp-select"]');
+      if (selEmp) {
+        selEmp.innerHTML = permitidas.map(function (e) {
+          return '<option value="' + esc(e.slug) + '"' + (e.slug === empresaSelC ? ' selected' : '') + '>' +
+            esc(e.label) + '</option>';
+        }).join('');
+        selEmp.addEventListener('change', function () {
+          empresaSelC = selEmp.value;
+          carrega();
+        });
+      }
 
       function preencheSelect(mesAtivo) {
         sel.innerHTML = MESES.map(function (m, i) {
@@ -522,19 +602,30 @@
 
       function carrega() {
         destroiCharts();
-        // 1) folha consolidada do grupo (define o mês default no 1º load)
-        pega('/api/folha/grupo' + qsFolha()).then(function (grupo) {
+        // 1) folha "base": consolidado do grupo (escopo total) OU empresa selecionada
+        //    (escopo parcial — /api/folha/grupo devolveria 403). Define o mês default.
+        var pathBase = total
+          ? '/api/folha/grupo' + qsFolha()
+          : '/api/folha/' + encodeURIComponent(empresaSelC) + qsFolha();
+        pega(pathBase).then(function (base) {
           if (!el.isConnected) return;
-          if (grupo && grupo.mes && !mesSel) {
-            mesSel = n(grupo.mes); // mês mais recente com folha carregada
+          if (base && base.mes && !mesSel) {
+            mesSel = n(base.mes); // mês mais recente com folha carregada
           }
-          preencheSelect(mesSel || (grupo && grupo.mes));
-          pintaKpis(el, grupo);
-          pintaRatio(el, grupo);
+          preencheSelect(mesSel || (base && base.mes));
+          if (total) {
+            pintaKpis(el, base);
+            pintaRatio(el, base); // widget grupo-only (usa por_empresa)
+          } else {
+            var empSel = permitidas.filter(function (e) { return e.slug === empresaSelC; })[0];
+            pintaKpisEmpresa(el, empSel, base);
+          }
 
-          // 2) folha por empresa (departamentos) — treemap, barras e drawers
-          var empresas = listaEmpresas();
-          Promise.all(empresas.map(function (e) {
+          // 2) folha por empresa PERMITIDA (departamentos) — treemap, barras e drawers
+          Promise.all(permitidas.map(function (e) {
+            if (!total && e.slug === empresaSelC) {
+              return Promise.resolve({ empresa: e, folha: base }); // reusa a chamada base
+            }
             return pega('/api/folha/' + encodeURIComponent(e.slug) + qsFolha()).then(function (f) {
               return { empresa: e, folha: f };
             });
@@ -556,7 +647,13 @@
             pintaTreemap(el, folhas, comparativo);
             var comFolha = folhas.filter(function (f) { return f.folha && n(f.folha.total) > 0; });
             comFolha.sort(function (a, b) { return n(b.folha.total) - n(a.folha.total); });
-            pintaDeptos(el, comFolha[0], comparativo);
+            var destaque = comFolha[0];
+            if (!total) {
+              // escopo parcial: painel de departamentos segue a EMPRESA SELECIONADA
+              var doSel = comFolha.filter(function (f) { return f.empresa.slug === empresaSelC; })[0];
+              if (doSel) destaque = doSel;
+            }
+            pintaDeptos(el, destaque, comparativo);
           });
         });
       }

@@ -18,11 +18,27 @@ Todos os valores vêm do PostgreSQL `cockpit_ref` (NUNCA hardcoded — spec §6 
   `RESULTADO OPERACIONAL ANTES DOS IMPOSTOS (EBIT)`, `RESULTADO LIQUIDO`.
 - `ebit_pct = EBIT / RECEITA BRUTA` (mesma janela).
 
-## Autenticação
-- `POST /api/login` body `{"senha": "..."}` → 204 + cookie httpOnly `ck_session` (12h). 401 se errada.
-- `GET /api/session` → `{"ok": true}` ou 401.
-- Demais `/api/*` exigem o cookie (401 sem ele). `COCKPIT_PASSWORD` não definida → 503
-  (fechado por padrão). `COCKPIT_DEV_OPEN=1` desativa auth (só dev local).
+## Autenticação + RBAC por usuário (Iteração 3)
+- `POST /api/login` body `{"usuario": "...", "senha": "..."}` → 204 + cookie httpOnly `ck_session` (12h).
+  401 se credencial errada. Usuários na tabela `cockpit_user(id PK, username UNIQUE, senha_hash
+  varchar(200) — scrypt salt$hash hex, empresas varchar(200) — CSV de slugs OU 'todas',
+  ativo bool default true, criado_em)`. **Master**: usuario `admin` + `COCKPIT_PASSWORD` → todas.
+- Cookie v2: `v2.<username>.<exp>.<hmac>` (HMAC-SHA256 sobre `username.exp`, secret derivado de
+  COCKPIT_PASSWORD). Tokens no formato antigo são rejeitados (re-login).
+- `GET /api/session` → `{"ok": true, "usuario": "...", "empresas": ["viv", ...] | "todas"}` ou 401.
+- **Enforcement SERVER-SIDE em todos os endpoints**: slug fora do escopo → **403**;
+  `grupo`/consolidado (kpis/grupo, fees/grupo, folha/grupo, cascata/grupo, dre*/grupo,
+  despesas/grupo, historico/grupo) → só usuários `todas` (o consolidado revela as outras);
+  `/api/empresas` → só as permitidas; `/api/alertas` → semáforo/críticos/atenção/heatmap
+  FILTRADOS ao escopo; snooze → só de alertas de empresas no escopo.
+- `COCKPIT_PASSWORD` não definida → 503 (fechado por padrão; ela também é o secret de assinatura).
+  `COCKPIT_DEV_OPEN=1` desativa auth (só dev local) — opcional `COCKPIT_DEV_USER=<username>`
+  simula esse usuário (escopo da tabela) p/ testar RBAC sem senha.
+- Gestão de usuários: CLI `ia/cockpit_users.py` (`add|list|disable|password`), senha via prompt
+  interativo (getpass) ou `--senha`; roda no servidor: `docker compose exec -it ia python cockpit_users.py ...`.
+- Front: campo usuário no login; sidebar mostra SÓ empresas permitidas; item "Macro — Grupo" e
+  telas consolidadas escondidos p/ escopo parcial; rota default de escopo parcial = 1ª empresa
+  permitida; chips de empresa filtrados; widgets grupo-only escondidos. (Backend 403 é a rede de segurança.)
 
 ## Endpoints (todos GET, exceto login/snooze; `ano` default = último ano com dados)
 - `/api/health` → `{status, db}` — **aberto** (sem cookie; usado por smoke tests/monitoração)
