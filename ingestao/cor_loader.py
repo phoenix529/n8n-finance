@@ -44,8 +44,18 @@ COR_API_KEY = os.environ.get("COR_API_KEY", "").strip()
 COR_CLIENT_SECRET = os.environ.get("COR_CLIENT_SECRET", "").strip()
 PER_PAGE = 100                               # menos páginas por recurso
 
-# Regra cliente-COR → empresa do grupo (best-effort até o cliente confirmar).
-# chave = prefixo/substring do nome do cliente no COR (upper); valor = codigo dim_empresa.
+# Empresa do COLABORADOR pela LABEL do COR (mecanismo escolhido pelo cliente):
+# cada pessoa recebe uma label da sua empresa. nome da label (upper) → codigo dim_empresa.
+# O custo de cada hora é atribuído à empresa de QUEM apontou — atribuição exata.
+COR_LABEL_EMPRESA = {
+    "REF": "REF", "REF+": "REF", "REF +": "REF",
+    "BD": "BD", "BLACKDOOR": "BD", "BLACK DOOR": "BD",
+    "4IN": "4PR", "4INFLUENCE": "4PR",
+    "VIV": "VIV", "VIV EXPERIENCE": "VIV",
+    "ZUP": "ZUP", "ZUPTECH": "ZUP",
+}
+# Fallback (projeto): best-effort por nome do cliente COR, usado só quando o
+# colaborador não tem label de empresa.
 COR_CLIENTE_EMPRESA = {
     "REF +": "REF", "REF+": "REF", "GRUPO REF": "REF",
     "BLACKDOOR": "BD", "BLDO": "BD",
@@ -120,6 +130,16 @@ def _empresa_id_por_codigo(cur):
     return {c: i for c, i in cur.fetchall()}
 
 
+def _empresa_do_colaborador(user, emp_por_cod):
+    """empresa_id (das 5) pela LABEL de empresa do colaborador no COR; None se sem label."""
+    for l in (user.get("labels") or []):
+        nome = (l.get("name") if isinstance(l, dict) else str(l)).upper().strip()
+        cod = COR_LABEL_EMPRESA.get(nome)
+        if cod:
+            return emp_por_cod.get(cod)
+    return None                              # colaborador ainda sem label de empresa
+
+
 def _empresa_do_projeto(proj, emp_por_cod):
     """empresa_id (das 5) por best-effort no nome do cliente COR; None se sem match."""
     cli = proj.get("client")
@@ -152,18 +172,22 @@ def _periodo_id(cur, ano, mes):
 def upsert_colaboradores(cur, emp_por_cod):
     """/users → dim_colaborador (+ custo/hora derivado do salário do COR).
     Retorna (n_colab, n_custo_novos, n_sem_salario)."""
-    n = ncusto = nsem = 0
+    n = ncusto = nsem = nsem_emp = 0
     hoje = dt.date.today()
     for u in _paginate("/users"):
         cor_id = str(u.get("id"))
         nome = f"{(u.get('first_name') or '').strip()} {(u.get('last_name') or '').strip()}".strip() or "?"
         up = u.get("userPosition")
         papel = up.get("name") if isinstance(up, dict) else None
+        emp_id = _empresa_do_colaborador(u, emp_por_cod)     # empresa pela label COR
+        if emp_id is None:
+            nsem_emp += 1
         cur.execute("""INSERT INTO dim_colaborador (cor_id, nome, papel, empresa_id, ativo)
                        VALUES (%s,%s,%s,%s,TRUE)
                        ON CONFLICT (cor_id) DO UPDATE
-                       SET nome=EXCLUDED.nome, papel=EXCLUDED.papel
-                       RETURNING id""", (cor_id, nome, papel, None))
+                       SET nome=EXCLUDED.nome, papel=EXCLUDED.papel,
+                           empresa_id=EXCLUDED.empresa_id
+                       RETURNING id""", (cor_id, nome, papel, emp_id))
         colab_id = cur.fetchone()[0]
         n += 1
         # custo/hora: só busca detalhe se ainda não há vigência aberta p/ o colaborador
@@ -256,11 +280,15 @@ def load_horas(cur, ini, fim):
         custo_h = float(r[0])
         per_id = periodos.get((ano, mes)) or _periodo_id(cur, ano, mes)
         periodos[(ano, mes)] = per_id
-        emp_id = None
-        cur.execute("SELECT empresa_id FROM dim_projeto WHERE id=%s", (pj,))
-        rr = cur.fetchone()
-        if rr:
-            emp_id = rr[0]
+        # empresa da hora = empresa do COLABORADOR (label COR) — atribuição de custo
+        # exata; fallback = empresa best-effort do projeto.
+        cur.execute("SELECT empresa_id FROM dim_colaborador WHERE id=%s", (co,))
+        rc = cur.fetchone()
+        emp_id = rc[0] if rc and rc[0] is not None else None
+        if emp_id is None:
+            cur.execute("SELECT empresa_id FROM dim_projeto WHERE id=%s", (pj,))
+            rr = cur.fetchone()
+            emp_id = rr[0] if rr else None
         cur.execute("""INSERT INTO fato_cor_horas
                          (empresa_id, projeto_id, colaborador_id, periodo_id, horas_apontadas, custo_hora)
                        VALUES (%s,%s,%s,%s,%s,%s)
