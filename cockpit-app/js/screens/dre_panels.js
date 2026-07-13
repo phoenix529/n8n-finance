@@ -790,6 +790,302 @@
     }
   }
 
+  /* ══ tira de callouts (estatísticas de apoio sob o gráfico) ════ */
+  function calloutStrip(items) {
+    return '<div class="ckdre-callouts" style="display:flex;flex-wrap:wrap;gap:18px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">' +
+      items.map(function (it) {
+        return '<div><div style="font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.04em;">' + esc(it.label) + '</div>' +
+          '<div style="font-family:\'JetBrains Mono\',monospace;font-size:15px;font-weight:600;color:' + (it.cor || 'var(--text-1)') + ';">' + it.value + '</div></div>';
+      }).join('') +
+    '</div>';
+  }
+
+  // pct de fees já vem 0–100; normaliza se vier em fração (0–1)
+  function normPct(arr) {
+    var soma = arr.reduce(function (s, v) { return s + Math.abs(n(v)); }, 0);
+    var f = (soma > 0 && soma <= 1.5) ? 100 : 1;
+    return arr.map(function (v) { return n(v) * f; });
+  }
+
+  // plugin: guias horizontais de risco (30% / 50%) sobre um eixo % (ex.: y1 do Pareto)
+  var pluginGuias = {
+    id: 'ckGuias',
+    afterDatasetsDraw: function (chart, args, opts) {
+      var vals = opts && opts.valores;
+      if (!vals) return;
+      var sc = chart.scales[(opts && opts.scaleId) || 'y1'];
+      if (!sc) return;
+      var ctx = chart.ctx, area = chart.chartArea;
+      vals.forEach(function (v) {
+        var y = sc.getPixelForValue(v);
+        if (y < area.top || y > area.bottom) return;
+        ctx.save();
+        ctx.strokeStyle = hexA('#E5484D', 0.5);
+        ctx.setLineDash([4, 4]);
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(area.left, y); ctx.lineTo(area.right, y); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = hexA('#E5484D', 0.9);
+        ctx.font = "600 9px 'JetBrains Mono', monospace";
+        ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+        ctx.fillText(v + '%', area.left + 4, y - 2);
+        ctx.restore();
+      });
+    }
+  };
+
+  /* ══ Painel 03 — despesas com pessoal (R$ + % da receita) ══════ */
+  function pintaPessoal(sec, meses, realizadoAte, ano, kpis) {
+    var box = sec.querySelector('[data-ck="dre-pessoal-callouts"]');
+    var canvas = sec.querySelector('[data-ck="dre-pessoal"]');
+    if (!canvas || !meses.length) {
+      vazio(sec, '[data-ck="dre-pessoal"]', 'Sem DRE mensal disponível.');
+      if (box) box.innerHTML = '';
+      return;
+    }
+    var labels = meses.map(function (m) { return nomeMes(m.mes); });
+    var pessoal = meses.map(function (m) { return Math.abs(n(m.pessoal)); });
+    var pct = meses.map(function (m) { var rb = n(m.receita_bruta); return rb === 0 ? null : Math.abs(n(m.pessoal)) / rb * 100; });
+    function ehProj(i) { return n(meses[i].mes) > realizadoAte; }
+
+    canvas.setAttribute('aria-label',
+      'Despesas com pessoal por mês em ' + ano + ': barras em reais e linha do percentual sobre a receita bruta (eixo à direita). Meses após o realizado aparecem esmaecidos (projeção).');
+
+    novoChart(canvas, {
+      type: 'bar',
+      data: {
+        labels: labels,
+        datasets: [
+          {
+            type: 'line', label: '% da receita bruta', data: pct, yAxisID: 'y1', order: 0,
+            borderColor: '#3B82F6', borderWidth: 2, tension: 0.3, spanGaps: true,
+            pointRadius: 3, pointHoverRadius: 5,
+            pointBackgroundColor: pct.map(function (v, i) { return ehProj(i) ? hexA('#3B82F6', 0.45) : '#3B82F6'; }),
+            pointBorderColor: 'transparent',
+            segment: {
+              borderDash: function (ctx) { return ehProj(ctx.p1DataIndex) ? [5, 4] : undefined; },
+              borderColor: function (ctx) { return ehProj(ctx.p1DataIndex) ? hexA('#3B82F6', 0.45) : '#3B82F6'; }
+            }
+          },
+          {
+            label: 'Despesa com pessoal', data: pessoal, yAxisID: 'y', order: 2,
+            backgroundColor: pessoal.map(function (v, i) { return ehProj(i) ? hexA('#1C1C1C', 0.35) : INK; }),
+            borderRadius: 4, borderSkipped: false
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: legendaClara(),
+          tooltip: tooltipClaro({
+            callbacks: {
+              label: function (c) {
+                var proj = ehProj(c.dataIndex) ? ' (projeção)' : '';
+                if (c.dataset.yAxisID === 'y1') return ' ' + (c.parsed.y == null ? 'sem receita no mês' : fmtPercent(c.parsed.y, 1)) + proj;
+                return ' ' + c.dataset.label + ': ' + fmtMoeda(c.parsed.y) + proj;
+              }
+            }
+          })
+        },
+        scales: {
+          x: eixoX(),
+          y: eixoYMoedaZero(),
+          y1: Object.assign(eixoYPct(), { position: 'right', grid: { drawOnChartArea: false } })
+        }
+      }
+    });
+
+    // callouts: custo pessoal 1º semestre (realizado) · % médio (realizado) · headcount
+    var custo1sem = 0, somaPct = 0, cntPct = 0;
+    meses.forEach(function (m) { var mm = n(m.mes); if (mm <= 6 && mm <= realizadoAte) custo1sem += Math.abs(n(m.pessoal)); });
+    pct.forEach(function (v, i) { if (v != null && !ehProj(i)) { somaPct += v; cntPct++; } });
+    var pctMedio = cntPct ? somaPct / cntPct : null;
+    var headcount = (kpis && kpis.headcount != null) ? n(kpis.headcount) : null;
+    if (box) box.innerHTML = calloutStrip([
+      { label: 'Custo pessoal · 1º sem.', value: fmtMoeda(custo1sem || 0) },
+      { label: '% médio s/ receita', value: pctMedio != null ? fmtPercent(pctMedio, 1) : '—' },
+      { label: 'Headcount', value: headcount != null ? headcount.toLocaleString('pt-BR') : '—' }
+    ]);
+  }
+
+  /* ══ Painel 09 — evolução do EBIT (mensal + anual) ═════════════ */
+  function linhaEbit(label, data, cor, ehProj) {
+    return {
+      label: label, data: data, borderColor: cor, backgroundColor: cor,
+      borderWidth: 2, tension: 0.3, spanGaps: true,
+      pointRadius: 3, pointHoverRadius: 5,
+      pointBackgroundColor: data.map(function (v, i) { return ehProj(i) ? hexA(cor, 0.45) : cor; }),
+      pointBorderColor: 'transparent',
+      segment: {
+        borderDash: function (ctx) { return ehProj(ctx.p1DataIndex) ? [5, 4] : undefined; },
+        borderColor: function (ctx) { return ehProj(ctx.p1DataIndex) ? hexA(cor, 0.45) : cor; }
+      }
+    };
+  }
+  function pintaEbitEvolucao(sec, meses, realizadoAte, ano, historico) {
+    /* (A) mensal: EBIT Negócio (ebit/receita_bruta) × EBIT Agência (ebit/resultado_agencia) */
+    var cM = sec.querySelector('[data-ck="dre-ebit-mensal"]');
+    var boxM = sec.querySelector('[data-ck="dre-ebit-callouts"]');
+    if (cM && meses.length) {
+      var labels = meses.map(function (m) { return nomeMes(m.mes); });
+      var neg = meses.map(function (m) { var rb = n(m.receita_bruta); return rb === 0 ? null : n(m.ebit) / rb * 100; });
+      var ag = meses.map(function (m) { var ra = n(m.resultado_agencia); return ra === 0 ? null : n(m.ebit) / ra * 100; });
+      function ehProj(i) { return n(meses[i].mes) > realizadoAte; }
+      cM.setAttribute('aria-label',
+        'Evolução mensal do EBIT em ' + ano + ': linha do EBIT Negócio (sobre a receita bruta) e linha do EBIT Agência (sobre o resultado da agência). Projeção esmaecida e tracejada.');
+      novoChart(cM, {
+        type: 'line',
+        data: { labels: labels, datasets: [
+          linhaEbit('EBIT Negócio', neg, '#3B82F6', ehProj),
+          linhaEbit('EBIT Agência', ag, ACCENT, ehProj)
+        ] },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: legendaClara(),
+            tooltip: tooltipClaro({
+              callbacks: {
+                label: function (c) {
+                  return ' ' + c.dataset.label + ': ' + (c.parsed.y == null ? 'n/d' : fmtPercent(c.parsed.y, 1)) +
+                    (ehProj(c.dataIndex) ? ' (projeção)' : '');
+                }
+              }
+            })
+          },
+          scales: { x: eixoX(), y: eixoYPct() }
+        }
+      });
+      // callouts: melhor/pior mês do EBIT Negócio (só realizado)
+      var best = null, worst = null;
+      neg.forEach(function (v, i) {
+        if (v == null || ehProj(i)) return;
+        if (best == null || v > neg[best]) best = i;
+        if (worst == null || v < neg[worst]) worst = i;
+      });
+      if (boxM) boxM.innerHTML = calloutStrip([
+        { label: 'Melhor mês (Negócio)', value: best != null ? nomeMes(meses[best].mes) + ' · ' + fmtPercent(neg[best], 1) : '—', cor: 'var(--green)' },
+        { label: 'Pior mês (Negócio)', value: worst != null ? nomeMes(meses[worst].mes) + ' · ' + fmtPercent(neg[worst], 1) : '—', cor: 'var(--red)' }
+      ]);
+    } else {
+      vazio(sec, '[data-ck="dre-ebit-mensal"]', 'Sem DRE mensal disponível.');
+      if (boxM) boxM.innerHTML = '';
+    }
+
+    /* (B) anual: histórico ebit_pct (Negócio) × ebit_agencia_pct (Agência) */
+    var cA = sec.querySelector('[data-ck="dre-ebit-anual"]');
+    var anos = ((historico && historico.anos) || []).slice().sort(function (a, b) { return n(a.ano) - n(b.ano); });
+    if (cA && anos.length) {
+      var labA = anos.map(function (a) { return String(a.ano); });
+      var negA = anos.map(function (a) { return a.ebit_pct == null ? null : n(a.ebit_pct); });
+      var agA = anos.map(function (a) { return a.ebit_agencia_pct == null ? null : n(a.ebit_agencia_pct); });
+      cA.setAttribute('aria-label',
+        'Evolução anual do EBIT: linha do EBIT Negócio e linha do EBIT Agência por ano, de ' + labA[0] + ' a ' + labA[labA.length - 1] + '.');
+      novoChart(cA, {
+        type: 'line',
+        data: { labels: labA, datasets: [
+          { label: 'EBIT Negócio', data: negA, borderColor: '#3B82F6', backgroundColor: '#3B82F6', borderWidth: 2, tension: 0.3, spanGaps: true, pointRadius: 3, pointHoverRadius: 5, pointBorderColor: 'transparent' },
+          { label: 'EBIT Agência', data: agA, borderColor: ACCENT, backgroundColor: ACCENT, borderWidth: 2, tension: 0.3, spanGaps: true, pointRadius: 3, pointHoverRadius: 5, pointBorderColor: 'transparent' }
+        ] },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: legendaClara(),
+            tooltip: tooltipClaro({
+              callbacks: { label: function (c) { return ' ' + c.dataset.label + ': ' + (c.parsed.y == null ? 'n/d' : fmtPercent(c.parsed.y, 1)); } }
+            })
+          },
+          scales: { x: eixoX(), y: eixoYPct() }
+        }
+      });
+    } else {
+      vazio(sec, '[data-ck="dre-ebit-anual"]', 'Sem histórico anual disponível.');
+    }
+  }
+
+  /* ══ Painel 10 — concentração de receita por cliente (Pareto) ══ */
+  function pintaPareto(sec, fees, ano) {
+    var box = sec.querySelector('[data-ck="dre-pareto-callouts"]');
+    var canvas = sec.querySelector('[data-ck="dre-pareto"]');
+    var clientes = ((fees && fees.clientes) || []).slice()
+      .sort(function (a, b) { return Math.abs(n(b.fee_anual)) - Math.abs(n(a.fee_anual)); });
+    if (!canvas || !clientes.length) {
+      vazio(sec, '[data-ck="dre-pareto"]', 'Sem fees por cliente carregados.');
+      if (box) box.innerHTML = '';
+      return;
+    }
+    var TOP = 20; // limita exibição p/ legibilidade; callouts usam a curva completa
+    var mostra = clientes.slice(0, TOP);
+    var labels = mostra.map(function (c) { return c.cliente; });
+    var vals = mostra.map(function (c) { return Math.abs(n(c.fee_anual)); });
+    var pctInd = normPct(clientes.map(function (c) { return c.pct; }));
+    var temAcum = clientes.some(function (c) { return c.pct_acum != null; });
+    var acumFull;
+    if (temAcum) acumFull = normPct(clientes.map(function (c) { return c.pct_acum; }));
+    else { var s = 0; acumFull = pctInd.map(function (v) { s += v; return s; }); }
+    var acum = acumFull.slice(0, TOP);
+
+    canvas.setAttribute('aria-label',
+      'Pareto da concentração de receita por cliente em ' + ano + ': barras do fee anual em ordem decrescente e linha do percentual acumulado, com guias de risco em 30% e 50%.');
+
+    var cfg = {
+      type: 'bar',
+      data: {
+        labels: labels,
+        datasets: [
+          {
+            type: 'line', label: '% acumulado', data: acum, yAxisID: 'y1', order: 0,
+            borderColor: '#3B82F6', borderWidth: 2, tension: 0.25,
+            pointRadius: 2, pointHoverRadius: 4, pointBorderColor: 'transparent', pointBackgroundColor: '#3B82F6'
+          },
+          {
+            label: 'Fee anual', data: vals, yAxisID: 'y', order: 2,
+            backgroundColor: mostra.map(function (c, i) { return i === 0 ? INK : (pctInd[i] >= 30 ? RED : GRAY); }),
+            borderRadius: 4, borderSkipped: false, barPercentage: 0.85
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: legendaClara(),
+          tooltip: tooltipClaro({
+            callbacks: {
+              label: function (c) {
+                if (c.dataset.yAxisID === 'y1') return ' acumulado: ' + fmtPercent(c.parsed.y, 1);
+                return ' ' + fmtMoeda(c.parsed.y) + ' · ' + fmtPercent(pctInd[c.dataIndex], 1) + ' do total';
+              }
+            }
+          })
+        },
+        scales: {
+          x: eixoX({ ticks: { color: GRAY, font: { size: 9 }, maxRotation: 60, minRotation: 45, autoSkip: false } }),
+          y: eixoYMoedaZero(),
+          y1: Object.assign(eixoYPct(), { position: 'right', min: 0, max: 100, grid: { drawOnChartArea: false } })
+        }
+      },
+      plugins: [pluginGuias]
+    };
+    cfg.options.plugins.ckGuias = { scaleId: 'y1', valores: [30, 50] };
+    novoChart(canvas, cfg);
+
+    // callouts: Top-3 % · Top-5 % · cauda · aviso se cliente único > 30%
+    var top3 = acumFull[Math.min(2, acumFull.length - 1)];
+    var top5 = acumFull[Math.min(4, acumFull.length - 1)];
+    var cauda = Math.max(0, 100 - top5);
+    var itens = [
+      { label: 'Top 3 clientes', value: fmtPercent(top3, 1) },
+      { label: 'Top 5 clientes', value: fmtPercent(top5, 1) },
+      { label: 'Cauda (demais)', value: fmtPercent(cauda, 1) }
+    ];
+    if (pctInd[0] >= 30) itens.push({ label: '⚠ Concentração', value: esc(clientes[0].cliente) + ' > 30%', cor: 'var(--red)' });
+    if (box) box.innerHTML = calloutStrip(itens);
+  }
+
   /* ══ esqueleto da seção ════════════════════════════════════════ */
   function cardChart(titulo, subtitulo, dataCk, altura, chip) {
     return '<div class="chart-card">' +
@@ -894,6 +1190,52 @@
             '</div>' +
           '</div>' +
           '<p style="color:var(--text-3);font-size:11px;margin:10px 4px 2px;">rollup do Grupo: regra padrão — confirmar categorias com o cliente.</p>' +
+        '</div>' +
+
+        // ── Painéis de refino (03 · 09 · 10) ──────────────────────
+        '<div class="ckdre-sec-title" style="margin-top:20px;"><span class="dot" aria-hidden="true"></span>Pessoal, rentabilidade e concentração</div>' +
+
+        // Painel 03 — despesas com pessoal (R$ + % da receita)
+        '<div class="chart-card">' +
+          '<div class="card-header"><div>' +
+            '<div class="card-title">Despesas com pessoal — R$ e % da receita</div>' +
+            '<div class="card-subtitle">Custo mensal (barras) e peso sobre a receita bruta (linha, eixo à direita) — projeção esmaecida</div>' +
+          '</div><div class="chip accent">Painel 03</div></div>' +
+          '<div class="chart-container" style="height:260px;">' +
+            '<canvas data-ck="dre-pessoal" role="img" aria-label="Despesas com pessoal em reais e percentual da receita bruta"></canvas>' +
+          '</div>' +
+          '<div data-ck="dre-pessoal-callouts"></div>' +
+        '</div>' +
+
+        // Painel 09 — evolução do EBIT (mensal + anual)
+        '<div class="chart-card" style="margin-bottom:6px;">' +
+          '<div class="card-header"><div>' +
+            '<div class="card-title">Evolução do EBIT — Negócio × Agência</div>' +
+            '<div class="card-subtitle">Mensal (esquerda) e anual (direita) — % do EBIT sobre a receita bruta (Negócio) e sobre o resultado da agência (Agência)</div>' +
+          '</div><div class="chip accent">Painel 09</div></div>' +
+          '<div class="ckdre-grid2" style="align-items:start;">' +
+            '<div>' +
+              '<div class="chart-container" style="height:240px;">' +
+                '<canvas data-ck="dre-ebit-mensal" role="img" aria-label="EBIT mensal Negócio versus Agência"></canvas>' +
+              '</div>' +
+              '<div data-ck="dre-ebit-callouts"></div>' +
+            '</div>' +
+            '<div class="chart-container" style="height:240px;">' +
+              '<canvas data-ck="dre-ebit-anual" role="img" aria-label="EBIT anual Negócio versus Agência"></canvas>' +
+            '</div>' +
+          '</div>' +
+        '</div>' +
+
+        // Painel 10 — concentração de receita por cliente (Pareto)
+        '<div class="chart-card">' +
+          '<div class="card-header"><div>' +
+            '<div class="card-title">Concentração de receita por cliente (Pareto)</div>' +
+            '<div class="card-subtitle">Fee anual por cliente (ordem decrescente) e % acumulado — guias de risco em 30% e 50%</div>' +
+          '</div><div class="chip accent">Painel 10</div></div>' +
+          '<div class="chart-container" style="height:300px;">' +
+            '<canvas data-ck="dre-pareto" role="img" aria-label="Pareto de concentração de receita por cliente"></canvas>' +
+          '</div>' +
+          '<div data-ck="dre-pareto-callouts"></div>' +
         '</div>';
 
       container.appendChild(sec);
@@ -905,10 +1247,14 @@
         pega('/api/cascata/' + slug + qs),
         pega('/api/despesas/' + slug + qs),
         pega('/api/dre/trimestral/' + slug + qs),
-        pega('/api/receita-tipo/' + slug + qs)
+        pega('/api/receita-tipo/' + slug + qs),
+        pega('/api/historico/' + slug),
+        pega('/api/fees/' + slug + qs),
+        pega('/api/kpis/' + slug + qs)
       ]).then(function (r) {
         if (!sec.isConnected) return; // tela já foi trocada
-        var dre = r[0], casc = r[1], desp = r[2], tri = r[3], rt = r[4];
+        var dre = r[0], casc = r[1], desp = r[2], tri = r[3], rt = r[4],
+            historico = r[5], fees = r[6], kpis = r[7];
         var anoEf = (dre && dre.ano) || ano || (window.CK && CK.state && CK.state.ano) || '';
         // realizado_ate ausente → assume tudo realizado (sem estilo de projeção)
         var realizadoAte = (dre && dre.realizado_ate != null) ? n(dre.realizado_ate) : 12;
@@ -926,6 +1272,10 @@
         // Painel 02: realizado_ate próprio do endpoint (fallback p/ o da DRE)
         var rtAte = (rt && rt.realizado_ate != null) ? n(rt.realizado_ate) : realizadoAte;
         pintaReceitaTipo(sec, rt, rtAte, anoEf);
+        // Painéis de refino 03 · 09 · 10
+        pintaPessoal(sec, meses, realizadoAte, anoEf, kpis);
+        pintaEbitEvolucao(sec, meses, realizadoAte, anoEf, historico);
+        pintaPareto(sec, fees, anoEf);
       });
     }
   };

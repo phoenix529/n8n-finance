@@ -63,6 +63,20 @@
     return 'rgba(' + (v >> 16 & 255) + ',' + (v >> 8 & 255) + ',' + (v & 255) + ',' + a + ')';
   }
 
+  // Painel 00: receita bruta do mês realizado mais recente (fallback: último mês da série)
+  function rbUltimoRealizado(dre) {
+    var meses = (dre && dre.meses) || [];
+    if (!meses.length) return null;
+    var ate = (dre && dre.realizado_ate != null) ? n(dre.realizado_ate) : 12;
+    if (ate <= 0) ate = 12; // nada realizado → usa o último mês disponível
+    var alvo = null;
+    meses.forEach(function (m) {
+      if (n(m.mes) <= ate && (alvo == null || n(m.mes) > n(alvo.mes))) alvo = m;
+    });
+    if (!alvo) alvo = meses[meses.length - 1];
+    return n(alvo.receita_bruta);
+  }
+
   /* ── wrappers CK.charts (destrói/recria a cada render) ───────── */
   function novoChart(canvas, cfg) {
     var ch = null, CC = window.CK && window.CK.charts;
@@ -158,8 +172,9 @@
     if (todosFracao) vals = vals.map(function (v) { return v * 100; });
 
     var labels = anos.map(function (a) { return String(a.ano); });
+    var meta = (window.CK && CK.state && CK.state.metaEbit) || 8;   // meta configurável do backend
     var cores = vals.map(function (v) {
-      return v >= 8 ? '#D9DA00' : v >= 4 ? '#3B82F6' : v >= 0 ? '#81807C' : '#E5484D';
+      return v >= meta ? '#D9DA00' : v >= meta / 2 ? '#3B82F6' : v >= 0 ? '#81807C' : '#E5484D';
     });
     canvas.setAttribute('aria-label',
       'Gráfico de barras: EBIT Negócio histórico da REF+ de ' + labels[0] + ' a ' + labels[labels.length - 1]);
@@ -348,11 +363,13 @@
   }
 
   /* ── KPIs consolidados ────────────────────────────────────────── */
-  function pintaKpis(el, kpis, fees) {
+  function pintaKpis(el, kpis, fees, rbColab) {
     var row = el.querySelector('[data-ck="kpis"]');
     if (!row || !kpis) return;
+    if (kpis.meta_ebit_pct != null && window.CK) CK.state.metaEbit = kpis.meta_ebit_pct;
     var prev = kpis.prev || {};
     var margem = n(kpis.receita_bruta) ? n(kpis.receita_liquida) / n(kpis.receita_bruta) * 100 : 0;
+    var rbColabTxt = (rbColab != null && isFinite(rbColab)) ? fmtMoeda(rbColab) : '—';
 
     row.innerHTML =
       // Receita Bruta — clicável → drawer Composição da Receita
@@ -387,6 +404,22 @@
         '<div class="kpi-value">' + fmtMoeda(kpis.resultado_liquido) + '</div>' +
         deltaBadge(kpis.resultado_liquido, prev.resultado_liquido) +
         '<div class="kpi-compare">' + (prev.resultado_liquido != null ? 'vs ' + fmtMoeda(prev.resultado_liquido) + ' em ' + esc(prev.ano) : '') + '</div>' +
+      '</div>' +
+      // Painel 00 — Headcount
+      '<div class="kpi-card blue" aria-label="Headcount total do grupo">' +
+        '<div class="kpi-icon blue" aria-hidden="true">👥</div>' +
+        '<div class="kpi-label">Headcount</div>' +
+        '<div class="kpi-value">' + n(kpis.headcount).toLocaleString('pt-BR') + '</div>' +
+        '<span class="kpi-delta warn">colaboradores</span>' +
+        '<div class="kpi-compare">total no grupo</div>' +
+      '</div>' +
+      // Painel 00 — Receita bruta / colaborador
+      '<div class="kpi-card accent" aria-label="Receita bruta por colaborador, no mês realizado mais recente">' +
+        '<div class="kpi-icon accent" aria-hidden="true">💵</div>' +
+        '<div class="kpi-label">Rec. bruta / colaborador</div>' +
+        '<div class="kpi-value">' + rbColabTxt + '</div>' +
+        '<span class="kpi-delta up">por colaborador</span>' +
+        '<div class="kpi-compare">receita bruta do mês realizado mais recente</div>' +
       '</div>';
 
     var kpiReceita = row.querySelector('[data-ck="kpi-receita"]');
@@ -468,11 +501,13 @@
         pega('/api/kpis/grupo' + qs),
         pega('/api/historico/ref-plus'),
         pega('/api/fees/grupo' + qs),
-        pega('/api/alertas' + qs)
+        pega('/api/alertas' + qs),
+        pega('/api/dre/mensal/grupo' + qs)
       ]).then(function (r) {
-        var kpis = r[0], historico = r[1], fees = r[2], alertas = r[3];
+        var kpis = r[0], historico = r[1], fees = r[2], alertas = r[3], dre = r[4];
         if (!el.isConnected) return; // tela já foi trocada
-        if (kpis) pintaKpis(el, kpis, fees);
+        var rbColab = kpis && n(kpis.headcount) ? (rbUltimoRealizado(dre) != null ? rbUltimoRealizado(dre) / n(kpis.headcount) : null) : null;
+        if (kpis) pintaKpis(el, kpis, fees, rbColab);
         else el.querySelector('[data-ck="kpis"]').innerHTML =
           '<div class="kpi-card red"><div class="kpi-label">Erro</div><div class="kpi-compare">Falha ao carregar KPIs do grupo.</div></div>';
         pintaEbit(el, historico);

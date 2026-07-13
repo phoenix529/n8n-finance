@@ -697,6 +697,7 @@ def kpis_grupo(ano: int | None = None, user=Depends(require_session)):
                 "folha_mes": _money(folha_total),
                 "headcount": headcount,
                 "resultado_liquido": _money(dre.get(RLIQ)),
+                "meta_ebit_pct": META_EBIT_PCT,        # meta configurável (env), não hardcode no front
                 "prev": {"ano": ano - 1,
                          "receita_bruta": _money(prev.get(RB)),
                          "resultado_liquido": _money(prev.get(RLIQ))},
@@ -719,6 +720,7 @@ def kpis_empresa(slug: str, ano: int | None = None, user=Depends(require_session
                 "resultado_agencia": _money(dre.get(RA)),
                 "ebit_pct": _pct(dre.get(EBIT), dre.get(RB)),   # EBIT / RECEITA BRUTA
                 "resultado_liquido": _money(dre.get(RLIQ)),
+                "meta_ebit_pct": META_EBIT_PCT,        # meta configurável (env), não hardcode no front
                 "prev": {"ano": ano - 1,
                          "receita_bruta": _money(prev.get(RB)),
                          "resultado_liquido": _money(prev.get(RLIQ))}}
@@ -1067,9 +1069,15 @@ def historico(slug: str, user=Depends(require_session)):
             FROM fato_dre_mensal f JOIN dim_conta c ON c.id=f.conta_id
             JOIN dim_empresa e ON e.id=f.empresa_id JOIN dim_periodo p ON p.id=f.periodo_id
             WHERE p.ano >= 2018{ef} GROUP BY p.ano ORDER BY p.ano""", [RB, RLIQ, EBIT] + ep)
-        anos = [{"ano": int(a), "receita_bruta": _money(rb),
-                 "resultado_liquido": _money(rl), "ebit_pct": _pct(eb, rb)}
-                for a, rb, rl, eb in cur.fetchall()]
+        anos = []
+        for a, rb, rl, eb in cur.fetchall():
+            # RA/EBIT do ano via _dre_ano (definição da planilha: % EBIT AGÊNCIA = EBIT/RA)
+            dre = _dre_ano(cur, emp, int(a))
+            ra = dre.get(RA)
+            anos.append({"ano": int(a), "receita_bruta": _money(rb),
+                         "resultado_liquido": _money(rl), "ebit_pct": _pct(eb, rb),
+                         "resultado_agencia": _money(ra),
+                         "ebit_agencia_pct": _pct(dre.get(EBIT), ra)})   # n/d se RA=0
         return {"anos": anos}
 
 
@@ -1239,6 +1247,43 @@ def folha(slug: str, ano: int | None = None, mes: int | None = None,
                                              rec_emp.get(e["code"]))}
                 for e in EMPRESAS]
         return out
+
+
+@router.get("/headcount/{slug}")
+def headcount(slug: str, ano: int | None = None, user=Depends(require_session)):
+    """Headcount por departamento (mês default da folha) + tendência mensal.
+    departamentos: desc por headcount, do mês default (via _folha_periodo_default).
+    meses: 12 itens, total = headcount TOTAL (COUNT da fato_folha_mensal) por mês;
+    grupo soma as 5 (COUNT sem filtro de empresa via _emp_where)."""
+    emp = _slug_or_404(slug)               # aceita 'grupo'
+    _autoriza(slug, user)                  # RBAC: grupo exige 'todas'
+    ef, ep = _emp_where(emp)
+    with _conn() as con:
+        cur = con.cursor()
+        _ensure_tables(cur)
+        ano = ano or _ano_default(cur)
+        mes = _folha_periodo_default(cur, ano)
+
+        # departamentos do mês default — headcount (COUNT) + total (folha)
+        cur.execute(f"""SELECT f.departamento, COUNT(*), COALESCE(SUM(f.total),0)
+            FROM fato_folha_mensal f JOIN dim_empresa e ON e.id=f.empresa_id
+            JOIN dim_periodo p ON p.id=f.periodo_id
+            WHERE p.ano=%s AND p.mes=%s{ef}
+            GROUP BY f.departamento""", [ano, mes] + ep)
+        departamentos = sorted(
+            [{"nome": dep or "—", "headcount": int(h), "total": _money(t)}
+             for dep, h, t in cur.fetchall()],
+            key=lambda d: -d["headcount"])
+
+        # tendência mensal do headcount TOTAL (COUNT por mês; grupo soma as 5)
+        cur.execute(f"""SELECT p.mes, COUNT(*)
+            FROM fato_folha_mensal f JOIN dim_empresa e ON e.id=f.empresa_id
+            JOIN dim_periodo p ON p.id=f.periodo_id
+            WHERE p.ano=%s{ef} GROUP BY p.mes""", [ano] + ep)
+        por_mes = {int(m): int(h) for m, h in cur.fetchall()}
+        meses = [{"mes": m, "total": por_mes.get(m, 0)} for m in range(1, 13)]
+
+        return {"ano": ano, "mes": mes, "departamentos": departamentos, "meses": meses}
 
 
 # =============================================================================

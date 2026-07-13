@@ -50,6 +50,20 @@
   var MESES = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
   function nomeMes(m) { m = n(m); return (m >= 1 && m <= 12) ? MESES[m - 1] : String(m); }
 
+  // Painel 00: receita bruta do mês realizado mais recente (fallback: último mês da série)
+  function rbUltimoRealizado(dre) {
+    var meses = (dre && dre.meses) || [];
+    if (!meses.length) return null;
+    var ate = (dre && dre.realizado_ate != null) ? n(dre.realizado_ate) : 12;
+    if (ate <= 0) ate = 12; // nada realizado → usa o último mês disponível
+    var alvo = null;
+    meses.forEach(function (m) {
+      if (n(m.mes) <= ate && (alvo == null || n(m.mes) > n(alvo.mes))) alvo = m;
+    });
+    if (!alvo) alvo = meses[meses.length - 1];
+    return n(alvo.receita_bruta);
+  }
+
   // CK.EMPRESAS pode ser array ou mapa por slug
   function getEmpresa(slug) {
     var E = (window.CK && CK.EMPRESAS) || null;
@@ -262,14 +276,16 @@
   }
 
   /* ── KPIs da empresa (5 cards) ────────────────────────────────── */
-  function pintaKpis(el, kpis, abreDrawer) {
+  function pintaKpis(el, kpis, abreDrawer, rbColab) {
     var row = el.querySelector('[data-ck="kpis"]');
     if (!row || !kpis) return;
     var prev = kpis.prev || {};
     var margemLiq = n(kpis.receita_bruta) ? n(kpis.receita_liquida) / n(kpis.receita_bruta) * 100 : 0;
     var margemAg = n(kpis.receita_bruta) ? n(kpis.resultado_agencia) / n(kpis.receita_bruta) * 100 : 0;
     var ebit = pctEscala(kpis.ebit_pct);
+    var meta = n(kpis.meta_ebit_pct) || 8;   // meta configurável do backend
     var resLiqPos = n(kpis.resultado_liquido) >= 0;
+    var rbColabTxt = (rbColab != null && isFinite(rbColab)) ? fmtMoeda(rbColab) : '—';
 
     row.innerHTML =
       // Rec. Bruta — clicável → drawer composição
@@ -302,7 +318,7 @@
         '<div class="kpi-icon ' + (ebit >= 0 ? 'blue' : 'red') + '" aria-hidden="true">📈</div>' +
         '<div class="kpi-label">EBIT Negócio</div>' +
         '<div class="kpi-value">' + fmtPct(ebit, 2) + '</div>' +
-        '<span class="kpi-delta ' + (ebit >= 8 ? 'up' : ebit >= 0 ? 'warn' : 'down') + '">' + (ebit >= 8 ? 'acima da meta' : ebit >= 0 ? 'abaixo da meta 8%' : 'negativo') + '</span>' +
+        '<span class="kpi-delta ' + (ebit >= meta ? 'up' : ebit >= 0 ? 'warn' : 'down') + '">' + (ebit >= meta ? 'acima da meta' : ebit >= 0 ? ('abaixo da meta ' + fmtPct(meta, 0)) : 'negativo') + '</span>' +
         '<div class="kpi-compare">EBIT / Receita Bruta</div>' +
       '</div>' +
       // Res. Líquido
@@ -312,6 +328,22 @@
         '<div class="kpi-value">' + fmtMoeda(kpis.resultado_liquido) + '</div>' +
         deltaBadge(kpis.resultado_liquido, prev.resultado_liquido) +
         '<div class="kpi-compare">' + (prev.resultado_liquido != null ? 'vs ' + fmtMoeda(prev.resultado_liquido) + ' em ' + esc(prev.ano) : '') + '</div>' +
+      '</div>' +
+      // Painel 00 — Headcount
+      '<div class="kpi-card blue" aria-label="Headcount da empresa">' +
+        '<div class="kpi-icon blue" aria-hidden="true">👥</div>' +
+        '<div class="kpi-label">Headcount</div>' +
+        '<div class="kpi-value">' + n(kpis.headcount).toLocaleString('pt-BR') + '</div>' +
+        '<span class="kpi-delta warn">colaboradores</span>' +
+        '<div class="kpi-compare">na empresa</div>' +
+      '</div>' +
+      // Painel 00 — Receita bruta / colaborador
+      '<div class="kpi-card accent" aria-label="Receita bruta por colaborador, no mês realizado mais recente">' +
+        '<div class="kpi-icon accent" aria-hidden="true">💵</div>' +
+        '<div class="kpi-label">Rec. bruta / colaborador</div>' +
+        '<div class="kpi-value">' + rbColabTxt + '</div>' +
+        '<span class="kpi-delta up">por colaborador</span>' +
+        '<div class="kpi-compare">receita bruta do mês realizado mais recente</div>' +
       '</div>';
 
     var kpiReceita = row.querySelector('[data-ck="kpi-receita"]');
@@ -546,7 +578,8 @@
       ]).then(function (r) {
         if (!el.isConnected) return; // tela já foi trocada
         var kpis = r[0], dre = r[1], tri = r[2], hist = r[3];
-        if (kpis) pintaKpis(el, kpis, abreDrawer);
+        var rbColab = kpis && n(kpis.headcount) ? (rbUltimoRealizado(dre) != null ? rbUltimoRealizado(dre) / n(kpis.headcount) : null) : null;
+        if (kpis) pintaKpis(el, kpis, abreDrawer, rbColab);
         else el.querySelector('[data-ck="kpis"]').innerHTML =
           '<div class="kpi-card red"><div class="kpi-label">Erro</div><div class="kpi-compare">Falha ao carregar KPIs de ' + esc(label) + '.</div></div>';
         pintaDreMensal(el, dre, label, abreDrawer);

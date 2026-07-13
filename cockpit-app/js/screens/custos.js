@@ -511,6 +511,111 @@
     });
   }
 
+  /* ── PANEL 04: headcount por departamento (NEW /api/headcount) ──
+     Contrato: {mes, departamentos:[{nome,headcount,total}] desc, meses:[{mes,total}]}
+     folhaDrill/empresaObj (opcionais): drill p/ o drawer de colaboradores
+     quando a folha da empresa selecionada traz colaboradores (escopo parcial). */
+  function pintaHeadcount(el, data, folhaDrill, empresaObj) {
+    var rank = el.querySelector('[data-ck="hc-rank"]');
+    var box  = el.querySelector('[data-ck="hc-mes-box"]');
+    var subT = el.querySelector('[data-ck="hc-rank-title"]');
+    var depts = (data && data.departamentos) || [];
+    var meses = (data && data.meses) || [];
+    var snap  = data && data.mes;
+
+    if (subT) {
+      subT.textContent = 'Ranking de ' +
+        (snap ? MESES[(n(snap) - 1 + 12) % 12] : 'período') + ' · headcount por departamento';
+    }
+
+    /* (a) ranking horizontal de headcount por departamento (snapshot) */
+    if (rank) {
+      if (!depts.length) {
+        rank.innerHTML = '<p class="empty-state">Sem headcount para o período.</p>';
+      } else {
+        var deptsS = depts.slice().sort(function (a, b) { return n(b.headcount) - n(a.headcount); });
+        var maxHc = 1;
+        deptsS.forEach(function (d) { maxHc = Math.max(maxHc, n(d.headcount)); });
+        // mapa de drill: só departamentos com colaboradores listados na folha da empresa
+        var drillMap = {};
+        if (empresaObj && folhaDrill && folhaDrill.departamentos) {
+          folhaDrill.departamentos.forEach(function (d) {
+            if (d && (d.colaboradores || []).length) drillMap[d.nome] = d;
+          });
+        }
+        rank.innerHTML = deptsS.map(function (d, i) {
+          var w = Math.round(n(d.headcount) / maxHc * 100);
+          var canDrill = !!drillMap[d.nome];
+          return '<div ' +
+            (canDrill ? 'data-ck="hc-row" data-i="' + i + '" role="button" tabindex="0" ' : '') +
+            'aria-label="Departamento ' + esc(d.nome) + ': ' + n(d.headcount) + ' pessoas' +
+              (canDrill ? '. Clique para detalhe.' : '') + '" ' +
+            'style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);' +
+              (canDrill ? 'cursor:pointer;' : '') + '">' +
+            '<span style="font-size:12px;color:var(--text-2);width:118px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(d.nome) + '</span>' +
+            '<div class="mini-bar-wrap" style="flex:1;width:auto;height:8px;"><div class="mini-bar-fill" style="width:' + w + '%;background:#D9DA00"></div></div>' +
+            '<span style="font-family:\'JetBrains Mono\',monospace;font-size:12px;font-weight:700;color:var(--text-1);white-space:nowrap;min-width:26px;text-align:right;">' + n(d.headcount) + '</span>' +
+            (d.total != null
+              ? '<span style="font-family:\'JetBrains Mono\',monospace;font-size:10px;color:var(--text-3);white-space:nowrap;">' + fmtMoeda(d.total) + '</span>'
+              : '') +
+          '</div>';
+        }).join('');
+
+        // drill opcional → drawer L2 de colaboradores (não quebra se ausente)
+        rank.querySelectorAll('[data-ck="hc-row"]').forEach(function (row) {
+          function abre() {
+            var d = drillMap[deptsS[Number(row.getAttribute('data-i'))].nome];
+            if (d && empresaObj) abreDrawerDeptL2(empresaObj, d);
+          }
+          row.addEventListener('click', abre);
+          row.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); abre(); } });
+        });
+      }
+    }
+
+    /* (b) barras de headcount total mês a mês */
+    if (box) {
+      if (!meses.length) {
+        box.innerHTML = '<p class="empty-state">Sem série mensal de headcount.</p>';
+      } else {
+        box.innerHTML = '<canvas data-ck="hc-mes" role="img"></canvas>';
+        var canvas = box.querySelector('[data-ck="hc-mes"]');
+        var labels = meses.map(function (m) { return MESES[(n(m.mes) - 1 + 12) % 12]; });
+        var vals = meses.map(function (m) { return n(m.total); });
+        canvas.setAttribute('aria-label',
+          'Evolução do headcount total mês a mês: ' +
+          labels.map(function (l, i) { return l + ' ' + vals[i]; }).join(', ') + '.');
+        novoChart(canvas, {
+          type: 'bar',
+          data: {
+            labels: labels,
+            datasets: [{
+              label: 'Headcount total',
+              data: vals,
+              backgroundColor: '#D9DA00',
+              borderRadius: 4,
+              borderSkipped: false
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: { display: false },
+              tooltip: tooltipDark({
+                callbacks: { label: function (c) { return ' ' + n(c.parsed.y).toLocaleString('pt-BR') + ' pessoas'; } }
+              })
+            },
+            scales: {
+              x: { grid: { display: false }, ticks: { color: '#81807C', font: { size: 10 } }, border: { color: 'rgba(0,0,0,0.07)' } },
+              y: { beginAtZero: true, grid: { color: 'rgba(0,0,0,0.05)' }, ticks: { color: '#81807C', font: { size: 10 }, precision: 0 }, border: { color: 'transparent' } }
+            }
+          }
+        });
+      }
+    }
+  }
+
   /* ── registro da tela ─────────────────────────────────────────── */
   CK.registerScreen('custos', {
     title: 'Cockpit de Custos — Folha Salarial',
@@ -577,7 +682,27 @@
                 '<p style="color:var(--text-3);font-size:12px;">Carregando…</p>' +
               '</div>' +
             '</div>'
-          : '');
+          : '') +
+
+        // PANEL 04 — Headcount por departamento (NEW /api/headcount)
+        '<div class="chart-card" style="margin-top:24px;">' +
+          '<div class="card-header"><div>' +
+            '<div class="card-title">Headcount por Departamento</div>' +
+            '<div class="card-subtitle">Ranking do mês mais recente · evolução do headcount total no ano</div>' +
+          '</div><div class="chip accent">Painel 04</div></div>' +
+          '<div class="grid-bot">' +
+            '<div>' +
+              '<div class="card-subtitle" data-ck="hc-rank-title" style="margin-bottom:6px;">Ranking por departamento</div>' +
+              '<div data-ck="hc-rank"><p style="color:var(--text-3);font-size:12px;">Carregando…</p></div>' +
+            '</div>' +
+            '<div>' +
+              '<div class="card-subtitle" style="margin-bottom:6px;">Headcount total — mês a mês</div>' +
+              '<div class="chart-container" style="height:220px;" data-ck="hc-mes-box">' +
+                '<p style="color:var(--text-3);font-size:12px;">Carregando…</p>' +
+              '</div>' +
+            '</div>' +
+          '</div>' +
+        '</div>';
 
       var sel = el.querySelector('[data-ck="mes-select"]');
 
@@ -613,13 +738,21 @@
             mesSel = n(base.mes); // mês mais recente com folha carregada
           }
           preencheSelect(mesSel || (base && base.mes));
+          var empSel = total ? null : permitidas.filter(function (e) { return e.slug === empresaSelC; })[0];
           if (total) {
             pintaKpis(el, base);
             pintaRatio(el, base); // widget grupo-only (usa por_empresa)
           } else {
-            var empSel = permitidas.filter(function (e) { return e.slug === empresaSelC; })[0];
             pintaKpisEmpresa(el, empSel, base);
           }
+
+          // PANEL 04: headcount do escopo atual (grupo consolidado OU empresa selecionada)
+          // drill só no escopo parcial, onde 'base' traz departamentos + colaboradores
+          var slugHC = total ? 'grupo' : empresaSelC;
+          pega('/api/headcount/' + encodeURIComponent(slugHC) + qsAno()).then(function (hc) {
+            if (!el.isConnected) return;
+            pintaHeadcount(el, hc, total ? null : base, empSel);
+          });
 
           // 2) folha por empresa PERMITIDA (departamentos) — treemap, barras e drawers
           Promise.all(permitidas.map(function (e) {
