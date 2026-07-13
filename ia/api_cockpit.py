@@ -683,6 +683,149 @@ def kpis_empresa(slug: str, ano: int | None = None, user=Depends(require_session
                          "resultado_liquido": _money(prev.get(RLIQ))}}
 
 
+@router.get("/cenario/{slug}")
+def cenario(slug: str, ano: int | None = None, user=Depends(require_session)):
+    """Base do simulador de cenários (contrato A): âncoras da DRE + resíduos em cascata.
+    deducoes=RB−RL, custos=RL−RA, tributos=EBIT−RLIQ; headcount da folha (mês default)."""
+    emp = GRUPO if slug == "grupo" else _slug_or_404(slug, allow_grupo=False)
+    _autoriza(slug, user)
+    with _conn() as con:
+        cur = con.cursor()
+        _ensure_tables(cur)
+        ano = ano or _ano_default(cur)
+        dre = _dre_ano(cur, emp, ano)
+        rb   = dre.get(RB)   or 0.0
+        rl   = dre.get(RL)   or 0.0
+        ra   = dre.get(RA)   or 0.0
+        ebit = dre.get(EBIT) or 0.0
+        rliq = dre.get(RLIQ) or 0.0
+        mes = _folha_periodo_default(cur, ano)
+        _folha_total, headcount = _folha_mes_total(cur, emp, ano, mes)
+        base = {
+            "rb": _money(rb), "rl": _money(rl), "ra": _money(ra),
+            "ebit": _money(ebit), "rliq": _money(rliq),
+            "deducoes": _money(rb - rl),                 # resíduo RB → RL
+            "custos": _money(rl - ra),                   # resíduo RL → RA
+            "pessoal": _money(dre.get(PESSOAL) or 0.0),
+            "infra": _money(dre.get(INFRA) or 0.0),
+            "outras": _money(dre.get(OUTRAS) or 0.0),
+            "tributos": _money(ebit - rliq),             # resíduo EBIT → RLIQ
+            "headcount": headcount,
+        }
+        return {"ano": ano, "titulo": f"Cenário {emp['label']} — {ano}",
+                "realizado_ate": _realizado_ate(ano), "base": base}
+
+
+# =============================================================================
+# Assistente de IA escopado (contrato B) — /api/perguntar
+# Contexto textual COMPACTO só das empresas permitidas + glossário de fórmulas.
+# Cliente Anthropic criado de forma preguiçosa (não quebra o import sem chave);
+# qualquer falha (sem chave/sem crédito/rate limit) → 200 com mensagem graciosa.
+# =============================================================================
+_LLM_MODEL = os.environ.get("LLM_MODEL", "claude-opus-4-8")
+_ANTHROPIC_CLIENT = None
+_INDISPONIVEL = ("O assistente de IA está temporariamente indisponível "
+                 "(verifique a chave/limites da API Anthropic).")
+
+_GLOSSARIO = (
+    "GLOSSÁRIO (fórmulas exatas):\n"
+    "EBIT Negócio = EBIT/Receita Bruta; EBIT Agência = EBIT/Resultado da Agência; "
+    "Receita Líquida = Receita Bruta − deduções; "
+    "Resultado da Agência = Receita Líquida − custos diretos; "
+    "EBIT = Resultado da Agência − pessoal − infra − outras; "
+    "Resultado Líquido = EBIT − tributos federais. "
+    "Meses ≤ realizado_ate = realizado; acima = PROJEÇÃO.")
+
+_SYSTEM_PERGUNTAR = (
+    "Você é o assistente executivo do Cockpit Financeiro do Grupo REF. "
+    "Responda SÓ com base no contexto fornecido. Sempre diga se o número é "
+    "realizado ou projeção. Nunca invente número fora do contexto. "
+    "Seja conciso e executivo. Responda em PT-BR.")
+
+
+def _cliente_anthropic():
+    """Cliente Anthropic (singleton preguiçoso). Retorna None se indisponível."""
+    global _ANTHROPIC_CLIENT
+    if _ANTHROPIC_CLIENT is None:
+        try:
+            import anthropic
+            if not os.environ.get("ANTHROPIC_API_KEY", "").strip():
+                return None
+            _ANTHROPIC_CLIENT = anthropic.Anthropic()
+        except Exception:
+            return None
+    return _ANTHROPIC_CLIENT
+
+
+def _top_fees(cur, emp, ano, n=5):
+    """Top-N clientes por fee mensal da empresa/grupo no ano."""
+    ef, ep = ("", []) if emp["code"] is None else (" AND e.codigo=%s", [emp["code"]])
+    cur.execute(f"""SELECT ff.cliente, ff.fee_mensal
+        FROM fato_fee_cliente ff JOIN dim_empresa e ON e.id=ff.empresa_id
+        WHERE ff.ano=%s{ef} ORDER BY ff.fee_mensal DESC NULLS LAST LIMIT %s""",
+                [ano] + ep + [n])
+    return cur.fetchall()
+
+
+def _ctx_empresa(cur, emp, ano, realizado_ate):
+    """Bloco textual compacto de KPIs do ano para uma empresa/grupo."""
+    dre = _dre_ano(cur, emp, ano)
+    rb, rl, ra = dre.get(RB) or 0.0, dre.get(RL) or 0.0, dre.get(RA) or 0.0
+    ebit, rliq = dre.get(EBIT) or 0.0, dre.get(RLIQ) or 0.0
+    mes = _folha_periodo_default(cur, ano)
+    folha_total, headcount = _folha_mes_total(cur, emp, ano, mes)
+    fees = _top_fees(cur, emp, ano)
+    linhas = [
+        f"## {emp['label']} ({emp['slug']}) — ano {ano} (realizado até mês {realizado_ate})",
+        f"Receita Bruta: {rb:,.2f}; Receita Líquida: {rl:,.2f}; Resultado da Agência: {ra:,.2f}",
+        f"EBIT Negócio %: {_pct(ebit, rb) if rb else 'n/d'}; "
+        f"EBIT Agência %: {_pct(ebit, ra) if ra else 'n/d'}; "
+        f"Resultado Líquido: {rliq:,.2f}",
+        f"Folha do mês {mes:02d}: {folha_total:,.2f}; Headcount: {headcount}",
+    ]
+    if fees:
+        top = "; ".join(f"{c}: {float(fm or 0):,.2f}/mês" for c, fm in fees)
+        linhas.append(f"Top-5 fees: {top}")
+    return "\n".join(linhas)
+
+
+class PerguntaBody(BaseModel):
+    texto: str
+
+
+@router.post("/perguntar")
+def perguntar(body: PerguntaBody, user=Depends(require_session)):
+    """Assistente Claude escopado ao RBAC do usuário (contrato B).
+    Contexto = glossário + KPIs do ano SÓ das empresas permitidas (grupo+5 se 'todas').
+    Nunca 500: sem chave/crédito/limite → 200 com mensagem graciosa."""
+    with _conn() as con:
+        cur = con.cursor()
+        _ensure_tables(cur)
+        ano = _ano_default(cur)
+        realizado_ate = _realizado_ate(ano)
+        if user["todas"]:
+            alvos = [GRUPO] + EMPRESAS
+            escopo = "todas"
+        else:
+            alvos = [e for e in EMPRESAS if e["slug"] in user["empresas"]]
+            escopo = sorted(user["empresas"])
+        blocos = [_ctx_empresa(cur, emp, ano, realizado_ate) for emp in alvos]
+
+    contexto = _GLOSSARIO + "\n\n" + "\n\n".join(blocos)
+    cliente = _cliente_anthropic()
+    if cliente is None:
+        return {"resposta": _INDISPONIVEL, "escopo": escopo}
+    try:
+        msg = cliente.messages.create(
+            model=_LLM_MODEL, max_tokens=1024, system=_SYSTEM_PERGUNTAR,
+            messages=[{"role": "user",
+                       "content": f"CONTEXTO:\n{contexto}\n\nPERGUNTA: {body.texto}"}])
+        resposta = "".join(b.text for b in msg.content if b.type == "text").strip()
+    except Exception:
+        return {"resposta": _INDISPONIVEL, "escopo": escopo}
+    return {"resposta": resposta or _INDISPONIVEL, "escopo": escopo}
+
+
 @router.get("/dre/mensal/{slug}")
 def dre_mensal(slug: str, ano: int | None = None, user=Depends(require_session)):
     emp = _slug_or_404(slug)

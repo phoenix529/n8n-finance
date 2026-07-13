@@ -401,7 +401,7 @@
     const h = (location.hash || '#/macro').replace(/^#\/?/, '');
     const parts = h.split('/').filter(Boolean);
     if (parts[0] === 'micro' && parts[1]) return { name: 'micro', params: { slug: parts[1] } };
-    if (['macro', 'receitas', 'custos', 'alertas', 'admin'].includes(parts[0]))
+    if (['macro', 'receitas', 'custos', 'alertas', 'admin', 'cenarios'].includes(parts[0]))
       return { name: parts[0], params: {} };
     return { name: 'macro', params: {} };
   }
@@ -507,6 +507,7 @@
     CK.state.autenticado = true;
     aplicaEscopo(sess);
     hideLogin();
+    if (CK.initAssistente) CK.initAssistente();   // Quadro 12 — barra do assistente
 
     // Lista de anos: contrato não tem /api/anos — deriva do histórico da 1ª empresa
     // PERMITIDA (ref-plus daria 403 p/ usuário de escopo parcial sem REF+)
