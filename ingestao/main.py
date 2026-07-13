@@ -24,6 +24,7 @@ from validators import validar_dre, run_quality_checks
 import folha_fees
 import history
 import tri_hist
+import receita_tipo
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 INCOMING = pathlib.Path(os.environ.get("INCOMING", ROOT / "data" / "incoming"))
@@ -119,6 +120,15 @@ def run():
         had_error = had_error or (not rt["ok"])
     except Exception as e:
         out.append(f"  [tri_hist] ERRO: {e}")
+        had_error = True
+
+    # mix de receita bruta por tipo (Painel 02) — fato_receita_tipo_mensal + reconc.
+    try:
+        rrt = receita_tipo.run()
+        out.append(rrt["output"])
+        had_error = had_error or (not rrt["ok"])
+    except Exception as e:
+        out.append(f"  [receita_tipo] ERRO: {e}")
         had_error = True
 
     alerts = run_quality_checks()              # checagens de qualidade pós-carga

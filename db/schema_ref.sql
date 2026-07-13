@@ -76,6 +76,20 @@ CREATE TABLE IF NOT EXISTS fato_receita_cliente_mensal (
 );
 CREATE INDEX IF NOT EXISTS ix_rec_cli_per ON fato_receita_cliente_mensal(cliente_id, periodo_id);
 
+-- Mix da RECEITA BRUTA por tipo canônico (Painel 02 — "Distribuição da receita bruta
+-- por tipo"). Origem: linhas de tipo logo abaixo de 'RECEITA BRUTA' na aba DRE-Base;
+-- a SOMA dos tipos por mês == RECEITA BRUTA do mês. Tipos canônicos (rollup DEFAULT):
+-- Fee Mensal, Mídia Off, Mídia On, Criação, Filmes/Spot, BVS, Outras.
+CREATE TABLE IF NOT EXISTS fato_receita_tipo_mensal (
+    id              SERIAL PRIMARY KEY,
+    empresa_id      INT NOT NULL REFERENCES dim_empresa(id),
+    periodo_id      INT NOT NULL REFERENCES dim_periodo(id),
+    tipo            VARCHAR(40) NOT NULL,       -- categoria canônica (ordem fixa no contrato)
+    valor           NUMERIC(16,2),
+    UNIQUE (empresa_id, periodo_id, tipo)
+);
+CREATE INDEX IF NOT EXISTS ix_rec_tipo_emp_per ON fato_receita_tipo_mensal(empresa_id, periodo_id);
+
 -- ----------------------------------------------------------------------------
 -- 5.4 Controle de carga
 -- ----------------------------------------------------------------------------

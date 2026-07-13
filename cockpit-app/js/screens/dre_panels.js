@@ -41,6 +41,13 @@
   var INK = '#1C1C1C', GRAY = '#81807C', GRAY_LT = '#C3C2BF',
       ACCENT = '#D9DA00', GREEN = '#22C55E', RED = '#E5484D';
 
+  /* cores por tipo de receita (Painel 02) — ordem canônica do endpoint */
+  var TIPO_CORES = {
+    'Fee Mensal': INK, 'Mídia Off': ACCENT, 'Mídia On': '#3B82F6',
+    'Criação': '#A855F7', 'Filmes/Spot': GREEN, 'BVS': '#F97316', 'Outras': GRAY
+  };
+  function corTipo(t) { return TIPO_CORES[t] || GRAY; }
+
   var MESES = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
   var MESES_FULL = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
                     'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
@@ -650,6 +657,139 @@
     novoChart(canvasRk, cfgRk);
   }
 
+  /* ══ (j) Painel 02 — distribuição da receita bruta por tipo ════ */
+  // plugin: rótulos de % no interior das fatias do donut (mix anual)
+  var pluginPctDonut = {
+    id: 'ckPctDonut',
+    afterDatasetsDraw: function (chart, args, opts) {
+      var pcts = opts && opts.pcts;
+      if (!pcts) return;
+      var ctx = chart.ctx, meta = chart.getDatasetMeta(0);
+      if (!meta || !meta.data) return;
+      meta.data.forEach(function (arco, i) {
+        if (pcts[i] == null || n(pcts[i]) < 6) return; // esconde rótulo de fatias mínimas
+        var pos = arco.tooltipPosition();
+        ctx.save();
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = "700 10px 'JetBrains Mono', monospace";
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(fmtPercent(pcts[i], 0), pos.x, pos.y);
+        ctx.restore();
+      });
+    }
+  };
+
+  function pintaReceitaTipo(sec, rt, realizadoAte, ano) {
+    var tipos = (rt && rt.tipos) || [];
+    var meses = (rt && rt.meses) || [];
+    var mix = (rt && rt.mix) || [];
+    var totalGeral = mix.reduce(function (s, m) { return s + Math.abs(n(m.total)); }, 0);
+
+    /* (a) barras EMPILHADAS 12 meses — uma série por tipo canônico */
+    var canvas = sec.querySelector('[data-ck="rt-stack"]');
+    if (canvas && meses.length && totalGeral > 0) {
+      var labels = meses.map(function (m) { return nomeMes(m.mes); });
+      function ehProj(i) { return n(meses[i].mes) > realizadoAte; }
+      canvas.setAttribute('aria-label',
+        'Distribuição da receita bruta por tipo, mês a mês em ' + ano +
+        ': barras empilhadas com uma faixa por tipo de receita. Meses após o realizado aparecem esmaecidos (projeção).');
+      novoChart(canvas, {
+        type: 'bar',
+        data: {
+          labels: labels,
+          datasets: tipos.map(function (t) {
+            var cor = corTipo(t);
+            return {
+              label: t,
+              data: meses.map(function (m) { return Math.abs(n(m[t])); }),
+              backgroundColor: meses.map(function (m, i) { return ehProj(i) ? hexA(cor, 0.45) : cor; }),
+              borderRadius: 2,
+              borderSkipped: false
+            };
+          })
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: legendaClara(),
+            tooltip: tooltipClaro({
+              callbacks: {
+                label: function (c) {
+                  return ' ' + c.dataset.label + ': ' + fmtMoeda(c.parsed.y) +
+                    (ehProj(c.dataIndex) ? ' (projeção)' : '');
+                }
+              }
+            })
+          },
+          scales: {
+            x: eixoX({ stacked: true }),
+            y: Object.assign(eixoYMoedaZero(), { stacked: true })
+          }
+        }
+      });
+    } else {
+      vazio(sec, '[data-ck="rt-stack"]', 'Sem receita por tipo carregada.');
+    }
+
+    /* (b) donut do mix anual + legenda com % */
+    var canvasD = sec.querySelector('[data-ck="rt-donut"]');
+    var leg = sec.querySelector('[data-ck="rt-legend"]');
+    if (canvasD && mix.length && totalGeral > 0) {
+      var pcts = mix.map(function (m) { return n(m.pct); });
+      canvasD.setAttribute('aria-label',
+        'Donut da participação de cada tipo de receita no total do ano ' + ano + ', com percentuais.');
+      var cfgD = {
+        type: 'doughnut',
+        data: {
+          labels: mix.map(function (m) { return m.tipo; }),
+          datasets: [{
+            data: mix.map(function (m) { return Math.abs(n(m.total)); }),
+            backgroundColor: mix.map(function (m) { return corTipo(m.tipo); }),
+            borderColor: '#FFFFFF',
+            borderWidth: 3,
+            hoverBorderWidth: 2
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          cutout: '62%',
+          plugins: {
+            legend: { display: false },
+            tooltip: tooltipClaro({
+              callbacks: {
+                label: function (c) {
+                  return ' ' + fmtMoeda(c.parsed) + ' (' + fmtPercent(pcts[c.dataIndex], 1) + ')';
+                }
+              }
+            })
+          }
+        },
+        plugins: [pluginPctDonut]
+      };
+      cfgD.options.plugins.ckPctDonut = { pcts: pcts };
+      novoChart(canvasD, cfgD);
+
+      if (leg) {
+        leg.innerHTML = mix.map(function (m) {
+          return '<div class="legend-row">' +
+            '<div class="legend-left">' +
+              '<div class="legend-dot" style="background:' + esc(corTipo(m.tipo)) + '"></div>' +
+              '<div><div class="legend-name">' + esc(m.tipo) + '</div>' +
+              '<div class="legend-pct">' + fmtPercent(m.pct, 1) + ' do total</div></div>' +
+            '</div>' +
+            '<div class="legend-val">' + fmtMoeda(m.total) + '</div>' +
+          '</div>';
+        }).join('');
+      }
+    } else {
+      vazio(sec, '[data-ck="rt-donut"]', 'Sem mix de receita disponível.');
+      if (leg) leg.innerHTML = '';
+    }
+  }
+
   /* ══ esqueleto da seção ════════════════════════════════════════ */
   function cardChart(titulo, subtitulo, dataCk, altura, chip) {
     return '<div class="chart-card">' +
@@ -733,7 +873,28 @@
         // (i) ranking — largura cheia
         cardChart('Ranking das despesas operacionais',
           'Somatório por conta no período realizado · participação % sobre o total',
-          'dre-ranking', 240);
+          'dre-ranking', 240) +
+
+        // (j) Painel 02 — distribuição da receita bruta por tipo (mix)
+        '<div class="ckdre-sec-title" style="margin-top:20px;"><span class="dot" aria-hidden="true"></span>Distribuição da receita por tipo</div>' +
+        '<div class="chart-card" style="margin-bottom:6px;">' +
+          '<div class="card-header"><div>' +
+            '<div class="card-title">Mix de receita bruta por tipo</div>' +
+            '<div class="card-subtitle">Empilhado por mês (esquerda) e participação anual (direita) — meses após o realizado esmaecidos (projeção)</div>' +
+          '</div><div class="chip accent">Painel 02</div></div>' +
+          '<div class="ckdre-grid2" style="align-items:start;">' +
+            '<div class="chart-container" style="height:300px;">' +
+              '<canvas data-ck="rt-stack" role="img" aria-label="Receita bruta por tipo, mês a mês"></canvas>' +
+            '</div>' +
+            '<div>' +
+              '<div class="chart-container" style="height:220px;">' +
+                '<canvas data-ck="rt-donut" role="img" aria-label="Mix anual de receita por tipo"></canvas>' +
+              '</div>' +
+              '<div class="donut-legend" data-ck="rt-legend"></div>' +
+            '</div>' +
+          '</div>' +
+          '<p style="color:var(--text-3);font-size:11px;margin:10px 4px 2px;">rollup do Grupo: regra padrão — confirmar categorias com o cliente.</p>' +
+        '</div>';
 
       container.appendChild(sec);
 
@@ -743,10 +904,11 @@
         pega('/api/dre/mensal/' + slug + qs),
         pega('/api/cascata/' + slug + qs),
         pega('/api/despesas/' + slug + qs),
-        pega('/api/dre/trimestral/' + slug + qs)
+        pega('/api/dre/trimestral/' + slug + qs),
+        pega('/api/receita-tipo/' + slug + qs)
       ]).then(function (r) {
         if (!sec.isConnected) return; // tela já foi trocada
-        var dre = r[0], casc = r[1], desp = r[2], tri = r[3];
+        var dre = r[0], casc = r[1], desp = r[2], tri = r[3], rt = r[4];
         var anoEf = (dre && dre.ano) || ano || (window.CK && CK.state && CK.state.ano) || '';
         // realizado_ate ausente → assume tudo realizado (sem estilo de projeção)
         var realizadoAte = (dre && dre.realizado_ate != null) ? n(dre.realizado_ate) : 12;
@@ -761,6 +923,9 @@
         pintaTrimestres(sec, tri, anoEf);
         pintaMargem(sec, meses, realizadoAte, anoEf);
         pintaDespesas(sec, desp, realizadoAte, anoEf);
+        // Painel 02: realizado_ate próprio do endpoint (fallback p/ o da DRE)
+        var rtAte = (rt && rt.realizado_ate != null) ? n(rt.realizado_ate) : realizadoAte;
+        pintaReceitaTipo(sec, rt, rtAte, anoEf);
       });
     }
   };

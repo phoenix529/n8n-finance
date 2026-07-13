@@ -18,7 +18,7 @@ Todos os valores vêm do PostgreSQL cockpit_ref (NUNCA hardcoded — spec §6).
 Dinheiro: 2 casas. Percentuais: fração*100 com 1–2 casas.
 LGPD: folha NUNCA expõe salário exato — apenas faixa (banda) salarial.
 """
-import os, re, hmac, time, hashlib, pathlib, datetime
+import os, re, hmac, time, hashlib, pathlib, datetime, unicodedata
 from contextlib import contextmanager
 
 import psycopg2
@@ -68,6 +68,37 @@ CONTAS_DESPESA = [PESSOAL, INFRA, OUTRAS]               # ranking de /api/despes
 CONTAS_MENSAIS = [RB, RL, RA, EBIT, RLIQ, CUSTOS] + CONTAS_DESPESA + [ADM, TRIB, CAIXA]
 
 META_EBIT_PCT = float(os.environ.get("COCKPIT_META_EBIT", "8"))   # A09 — meta default 8%
+
+# Painel 02 — mix de receita bruta por TIPO. Categorias CANÔNICAS (ordem fixa) e
+# regra de rollup do Grupo. DEFAULT — a confirmar com o cliente. O classificador
+# roda no endpoint de forma DEFENSIVA: absorve tanto os rótulos crus da DRE-Base
+# quanto os já-canônicos (a ingestão pode gravar qualquer um) → sempre 7 baldes.
+TIPOS_RECEITA = ["Fee Mensal", "Mídia Off", "Mídia On", "Criação",
+                 "Filmes/Spot", "BVS", "Outras"]
+
+
+def _sem_acento(s):
+    return "".join(c for c in unicodedata.normalize("NFD", str(s or ""))
+                   if unicodedata.category(c) != "Mn")
+
+
+def _tipo_canonico(label):
+    """Mapeia um rótulo de tipo de receita para uma das 7 categorias canônicas.
+    Ordem importa: 'Mídia On' (online/programática) antes de 'Mídia Off' (demais mídia)."""
+    s = _sem_acento(label).upper()
+    if "FEE" in s:
+        return "Fee Mensal"
+    if "ONLINE" in s or "PROGRAMA" in s or "MIDIA ON" in s:
+        return "Mídia On"
+    if "MIDIA" in s:                       # qualquer outra mídia = off
+        return "Mídia Off"
+    if "CRIA" in s:
+        return "Criação"
+    if "FILME" in s or "SPOT" in s:
+        return "Filmes/Spot"
+    if "BVS" in s:
+        return "BVS"
+    return "Outras"
 
 router = APIRouter(prefix="/api")
 
@@ -134,6 +165,16 @@ CREATE TABLE IF NOT EXISTS fato_dre_tri_hist (
     metrica    VARCHAR(60) NOT NULL,
     valor      NUMERIC(16,2),
     UNIQUE (empresa_id, ano, tri, metrica)
+);
+-- Painel 02 "Distribuição da receita bruta por tipo" (mix de receita).
+-- Preenchida pelo módulo de ingestão (aba DRE-Base); a API funciona vazia.
+CREATE TABLE IF NOT EXISTS fato_receita_tipo_mensal (
+    id         SERIAL PRIMARY KEY,
+    empresa_id INT NOT NULL REFERENCES dim_empresa(id),
+    periodo_id INT NOT NULL REFERENCES dim_periodo(id),
+    tipo       VARCHAR(40) NOT NULL,
+    valor      NUMERIC(16,2),
+    UNIQUE (empresa_id, periodo_id, tipo)
 );
 """
 
@@ -1077,6 +1118,53 @@ def receita_var(slug: str, ano: int | None = None, user=Depends(require_session)
             ORDER BY SUM(r.valor) DESC NULLS LAST""", [ano] + ep)
         return {"clientes": [{"cliente": n, "tipo_receita": t, "total": _money(v)}
                              for n, t, v in cur.fetchall()]}
+
+
+@router.get("/receita-tipo/{slug}")
+def receita_tipo(slug: str, ano: int | None = None, user=Depends(require_session)):
+    """Painel 02 — distribuição da receita bruta por TIPO (mix de receita).
+    Lê fato_receita_tipo_mensal (vazia até a ingestão rodar → zeros graciosos).
+    grupo = soma das 5 (via _emp_where). tipos em ordem canônica; meses 12 itens;
+    mix desc por total com pct (% do total anual). Rollup do Grupo = regra DEFAULT."""
+    emp = _slug_or_404(slug)               # aceita 'grupo'
+    _autoriza(slug, user)                  # RBAC: grupo exige 'todas'
+    ef, ep = _emp_where(emp)
+    with _conn() as con:
+        cur = con.cursor()
+        _ensure_tables(cur)                # cobre a tabela nova se a ingestão não rodou
+        ano = ano or _ano_default(cur)
+        cur.execute(f"""SELECT p.mes, r.tipo, SUM(r.valor)
+            FROM fato_receita_tipo_mensal r
+            JOIN dim_empresa e ON e.id=r.empresa_id
+            JOIN dim_periodo p ON p.id=r.periodo_id
+            WHERE p.ano=%s{ef} GROUP BY p.mes, r.tipo""", [ano] + ep)
+
+        por_mes = {m: {t: 0.0 for t in TIPOS_RECEITA} for m in range(1, 13)}
+        totais = {t: 0.0 for t in TIPOS_RECEITA}
+        for mes, tipo, v in cur.fetchall():
+            if v is None:
+                continue
+            m = int(mes)
+            if 1 <= m <= 12:
+                c = _tipo_canonico(tipo)   # rollup defensivo → 1 dos 7 canônicos
+                por_mes[m][c] += float(v)
+                totais[c] += float(v)
+
+        meses = []
+        for m in range(1, 13):             # sempre 12 itens
+            linha = {"mes": m}
+            for t in TIPOS_RECEITA:
+                linha[t] = _money(por_mes[m][t])
+            meses.append(linha)
+
+        total_geral = sum(totais.values()) or None
+        mix = sorted(
+            [{"tipo": t, "total": _money(totais[t]), "pct": _pct(totais[t], total_geral) or 0.0}
+             for t in TIPOS_RECEITA],
+            key=lambda d: -(d["total"] or 0.0))
+
+        return {"ano": ano, "realizado_ate": _realizado_ate(ano),
+                "tipos": TIPOS_RECEITA, "meses": meses, "mix": mix}
 
 
 # --- Folha — LGPD: nunca expor salário exato, só a banda ---------------------
