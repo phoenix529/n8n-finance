@@ -47,6 +47,20 @@ docker compose exec -T ia python -c "import urllib.request,sys; \
 sys.exit(0 if 'ok' in urllib.request.urlopen('http://127.0.0.1:8500/health',timeout=8).read().decode() else 1)" \
   && echo "    IA OK" || { echo "    IA FALHOU"; docker compose logs --tail=40 ia; exit 1; }
 
+# Backup diário do banco (Blueprint §8) — agenda idempotente via /etc/cron.d.
+# Dump roda dentro do container 'db'; retenção de 7 dias; falha alto (não poda em erro).
+echo "==> agendando backup diário do banco (cron 03:00, retenção 7d)"
+mkdir -p "$APP_DIR/backups"
+cat > /etc/cron.d/cockpit-backup <<CRON
+# Gerado por deploy.sh — backup diário do Postgres do Cockpit REF (§8). NÃO editar à mão.
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+0 3 * * * root APP_DIR=$APP_DIR BACKUP_DIR=$APP_DIR/backups bash $APP_DIR/backups/pg_backup.sh >> $APP_DIR/backups/backup.log 2>&1
+CRON
+chmod 0644 /etc/cron.d/cockpit-backup
+# garante que o cron está ativo (imagem mínima pode não ter o serviço rodando)
+service cron start 2>/dev/null || systemctl start cron 2>/dev/null || true
+
 echo "==> limpeza de imagens órfãs"
 docker image prune -f >/dev/null 2>&1 || true
 echo "==> deploy concluído."
