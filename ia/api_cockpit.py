@@ -18,7 +18,7 @@ Todos os valores vêm do PostgreSQL cockpit_ref (NUNCA hardcoded — spec §6).
 Dinheiro: 2 casas. Percentuais: fração*100 com 1–2 casas.
 LGPD: folha NUNCA expõe salário exato — apenas faixa (banda) salarial.
 """
-import os, re, hmac, time, hashlib, pathlib, datetime, unicodedata
+import os, re, hmac, json, time, hashlib, pathlib, datetime, unicodedata
 from contextlib import contextmanager
 
 import psycopg2
@@ -213,6 +213,16 @@ CREATE TABLE IF NOT EXISTS fato_receita_tipo_mensal (
     tipo       VARCHAR(40) NOT NULL,
     valor      NUMERIC(16,2),
     UNIQUE (empresa_id, periodo_id, tipo)
+);
+-- Persistência de layout por-usuário (ordem/ocultos dos painéis por tela).
+-- Chaveada por (username da SESSÃO, tela) → isolamento total entre usuários.
+CREATE TABLE IF NOT EXISTS cockpit_user_layout (
+    id            SERIAL PRIMARY KEY,
+    username      VARCHAR(80) NOT NULL,
+    tela          VARCHAR(40) NOT NULL,
+    config        JSONB NOT NULL,
+    atualizado_em TIMESTAMP DEFAULT NOW(),
+    UNIQUE (username, tela)
 );
 """
 
@@ -1589,4 +1599,64 @@ def snooze(alert_id: str, body: SnoozeBody, user=Depends(require_session)):
             VALUES (%s, CURRENT_DATE + %s)
             ON CONFLICT (alert_id) DO UPDATE SET ate = EXCLUDED.ate""",
                     [alert_id, body.dias])
+    return Response(status_code=204)
+
+
+# =============================================================================
+# Persistência de layout por-usuário (ordem/ocultos dos painéis por tela).
+# Isolamento total: a chave é SEMPRE o username da SESSÃO (require_session),
+# nunca um parâmetro — um usuário jamais lê/escreve o layout de outro.
+# =============================================================================
+_TELAS_LAYOUT = {"macro", "receitas", "custos", "alertas", "cenarios"}
+_LAYOUT_MAX_BYTES = 16 * 1024          # cap do config serializado (> 16KB → 400)
+
+
+def _tela_or_404(tela):
+    # micro é POR EMPRESA: 'micro/<slug>' (layout independente por cliente).
+    if tela.startswith("micro/"):
+        if tela[6:] in BY_SLUG:
+            return tela
+    elif tela in _TELAS_LAYOUT:
+        return tela
+    raise HTTPException(status_code=404, detail=f"tela desconhecida: {tela}")
+
+
+class LayoutConfig(BaseModel):
+    ordem: list[str] = []
+    ocultos: list[str] = []
+
+
+class LayoutBody(BaseModel):
+    config: LayoutConfig
+
+
+@router.get("/layout/{tela:path}")
+def layout_get(tela: str, user=Depends(require_session)):
+    """Layout salvo do usuário da SESSÃO para a tela. {} se não houver. 404 se tela inválida."""
+    _tela_or_404(tela)
+    with _conn() as con:
+        cur = con.cursor()
+        _ensure_tables(cur)
+        cur.execute("SELECT config FROM cockpit_user_layout WHERE username=%s AND tela=%s",
+                    [user["usuario"], tela])
+        r = cur.fetchone()
+    # psycopg2 devolve jsonb já como dict/list Python
+    return {"tela": tela, "config": r[0] if r and r[0] is not None else {}}
+
+
+@router.put("/layout/{tela:path}", status_code=204)
+def layout_put(tela: str, body: LayoutBody, user=Depends(require_session)):
+    """Grava (upsert) o layout do usuário da SESSÃO para a tela. Cap de 16KB → 400."""
+    _tela_or_404(tela)
+    payload = json.dumps(body.config.dict())
+    if len(payload.encode("utf-8")) > _LAYOUT_MAX_BYTES:
+        raise HTTPException(status_code=400, detail="config excede o limite de 16KB")
+    with _conn() as con:
+        cur = con.cursor()
+        _ensure_tables(cur)
+        cur.execute("""INSERT INTO cockpit_user_layout (username, tela, config, atualizado_em)
+            VALUES (%s, %s, %s::jsonb, NOW())
+            ON CONFLICT (username, tela)
+            DO UPDATE SET config = EXCLUDED.config, atualizado_em = NOW()""",
+                    [user["usuario"], tela, payload])
     return Response(status_code=204)

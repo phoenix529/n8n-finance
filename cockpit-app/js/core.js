@@ -576,6 +576,341 @@
     scanExport();
   };
 
+  /* ═══════════════════════════════════════════════════════════════
+     CK.layoutInit() — gerenciador de layout por tela (mostrar/ordenar)
+     ───────────────────────────────────────────────────────────────
+     Genérico e 100% DOM: cada .chart-card/.card dentro de #content que
+     tenha um .card-title ou .sec-title é "gerenciável". A CHAVE estável
+     é o TEXTO do título normalizado (trim + espaços colapsados + minúsculas
+     + sem acentos). A TELA é parseHash().name.
+       • Aplica o layout salvo (GET /api/layout/<tela>, cache por tela):
+         esconde cards em config.ocultos e reordena conforme config.ordem.
+         Cards novos (fora da config) seguem visíveis na posição natural.
+       • Botão "Personalizar" (topbar, ao lado de #btn-relatorio) abre um
+         drawer com checkbox (visível) + ↑/↓ (reordenar) por card, além de
+         "Restaurar padrão" e "Salvar" (PUT /api/layout/<tela>).
+     Idempotente: reaplica limpo a cada render; 401/erros → tudo visível.
+     ═══════════════════════════════════════════════════════════════ */
+
+  const _layoutCache = {};   // tela → { ordem:[], ocultos:[] }
+
+  // tela p/ o layout: micro é POR EMPRESA (micro/<slug>), senão o nome da rota
+  function telaAtual() {
+    const r = parseHash();
+    return r.name === 'micro' && r.params && r.params.slug ? 'micro/' + r.params.slug : r.name;
+  }
+
+  // normaliza o título → chave estável (remove contadores "(N)" e sufixos voláteis
+  // após em/en-dash, ex.: "DRE Mês a Mês — Jun/26"), removendo acentos.
+  function normKey(s) {
+    return String(s == null ? '' : s)
+      .normalize('NFD').replace(/[̀-ͯ]/g, '')      // remove acentos
+      .replace(/\s*\(\s*\d[\d.,\s]*\)\s*/g, ' ')             // remove "(N)" volátil
+      .replace(/\s+[—–]\s.*$/, '')                           // remove sufixo após — / –
+      .toLowerCase().replace(/\s+/g, ' ').trim();
+  }
+
+  // Chave do card: prefere um atributo ESTÁVEL (data-ck-key do card ou o 1º
+  // [data-ck] interno, ex.: 'dre-cascata') — imune a título com dado ao vivo;
+  // só cai no título normalizado quando não há atributo.
+  function cardKey(card, titulo) {
+    const attr = card.getAttribute('data-ck-key');
+    if (attr) return 'k:' + attr;
+    const dc = card.querySelector('[data-ck]');
+    if (dc && dc.getAttribute('data-ck')) return 'ck:' + dc.getAttribute('data-ck');
+    return normKey(titulo);
+  }
+
+  // cards gerenciáveis da tela atual → [{card, key, titulo}] (ordem do DOM)
+  function manageableCards() {
+    const root = document.getElementById('content');
+    if (!root) return [];
+    const seen = [], out = [];
+    root.querySelectorAll('.card-title, .sec-title').forEach(function (t) {
+      const card = t.closest('.chart-card, .card');
+      if (!card || seen.indexOf(card) !== -1) return;
+      const titulo = (t.textContent || '').trim();
+      const key = cardKey(card, titulo);
+      if (!key) return;
+      seen.push(card);
+      out.push({ card: card, key: key, titulo: titulo });
+    });
+    return out;
+  }
+
+  // aplica config {ordem, ocultos} aos cards vivos (idempotente)
+  function applyLayout(cfg) {
+    const items = manageableCards();
+    if (!items.length) return;
+    const ocultos = (cfg && cfg.ocultos) || [];
+    const ordem = (cfg && cfg.ordem) || [];
+    // visibilidade — só mexe no que este módulo escondeu (dataset marca a origem)
+    items.forEach(function (it) {
+      if (ocultos.indexOf(it.key) !== -1) {
+        it.card.style.display = 'none';
+        it.card.dataset.ckHidden = '1';
+      } else if (it.card.dataset.ckHidden) {
+        it.card.style.display = '';
+        delete it.card.dataset.ckHidden;
+      }
+    });
+    // reordenação — anexa cada chave conhecida na sequência salva, dentro do seu
+    // pai. Cards novos (fora de `ordem`) não são movidos → posição natural.
+    if (ordem.length) {
+      const byKey = {};
+      items.forEach(function (it) { if (!(it.key in byKey)) byKey[it.key] = it; });
+      ordem.forEach(function (k) {
+        const it = byKey[k];
+        if (it && it.card.parentNode) it.card.parentNode.appendChild(it.card);
+      });
+    }
+  }
+
+  // GET do layout com cache por tela; 404/erro → default vazio; 401 propaga
+  function loadLayout(tela) {
+    if (Object.prototype.hasOwnProperty.call(_layoutCache, tela)) {
+      return Promise.resolve(_layoutCache[tela]);
+    }
+    return CK.api('/api/layout/' + encodeURIComponent(tela)).then(function (r) {
+      const c = (r && r.config) ? r.config : (r || {});
+      const cfg = { ordem: c.ordem || [], ocultos: c.ocultos || [] };
+      _layoutCache[tela] = cfg;
+      return cfg;
+    }, function (e) {
+      if (e && e.status === 401) throw e;   // overlay de login já exibido
+      const cfg = { ordem: [], ocultos: [] };
+      _layoutCache[tela] = cfg;             // 404/erro → não fica re-tentando
+      return cfg;
+    });
+  }
+
+  // CSS do módulo (tema claro) — 1x
+  function ensureLayoutCSS() {
+    if (document.getElementById('ck-layout-style')) return;
+    const st = document.createElement('style');
+    st.id = 'ck-layout-style';
+    st.textContent =
+      '.btn-personalizar{display:inline-flex;align-items:center;gap:6px;' +
+        'padding:7px 12px;background:var(--bg-hover);color:var(--text-1);' +
+        'border:1px solid var(--border);border-radius:8px;cursor:pointer;' +
+        'font-size:12px;font-weight:600;font-family:inherit;transition:opacity .15s,border-color .15s;}' +
+      '.btn-personalizar:hover{border-color:var(--accent,#D9DA00);}' +
+      '.btn-personalizar:focus-visible{outline:2px solid var(--accent,#D9DA00);outline-offset:2px;}' +
+      '.ck-lay-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px;}' +
+      '.ck-lay-row{display:flex;align-items:center;gap:10px;padding:10px 12px;' +
+        'background:var(--bg-card,#fff);border:1px solid var(--border,#E6E3DC);' +
+        'border-radius:var(--radius-sm,6px);}' +
+      '.ck-lay-row.oculto{opacity:.55;}' +
+      '.ck-lay-chk{width:16px;height:16px;flex:0 0 auto;cursor:pointer;accent-color:var(--accent,#D9DA00);}' +
+      '.ck-lay-titulo{flex:1;font-size:13px;color:var(--text-1,#1C1C1C);' +
+        'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}' +
+      '.ck-lay-mv{width:28px;height:28px;padding:0;flex:0 0 auto;line-height:26px;' +
+        'text-align:center;font-size:14px;cursor:pointer;color:var(--text-3);' +
+        'background:var(--bg-hover);border:1px solid var(--border);border-radius:var(--radius-sm,6px);}' +
+      '.ck-lay-mv:hover:not([disabled]){color:var(--text-1);border-color:var(--accent,#D9DA00);}' +
+      '.ck-lay-mv:focus-visible{outline:2px solid var(--accent,#D9DA00);outline-offset:2px;}' +
+      '.ck-lay-mv[disabled]{opacity:.35;cursor:default;}' +
+      '.ck-lay-foot{display:flex;gap:10px;align-items:center;margin-top:18px;' +
+        'padding-top:16px;border-top:1px solid var(--border,#E6E3DC);}' +
+      '.ck-lay-msg{flex:1;font-size:12px;color:var(--red,#E5484D);}' +
+      '.ck-lay-btn{padding:8px 14px;font-size:12px;font-weight:600;font-family:inherit;' +
+        'border-radius:var(--radius-sm,6px);cursor:pointer;}' +
+      '.ck-lay-btn.prim{background:var(--ink,#1C1C1C);color:#F9F8F6;border:none;}' +
+      '.ck-lay-btn.sec{background:none;color:var(--text-1);border:1px solid var(--border);}' +
+      '.ck-lay-btn:focus-visible{outline:2px solid var(--accent,#D9DA00);outline-offset:2px;}' +
+      '.ck-lay-btn[disabled]{opacity:.5;cursor:progress;}' +
+      '.ck-lay-vazio{font-size:13px;color:var(--text-3);}';
+    document.head.appendChild(st);
+  }
+
+  // injeta o botão "Personalizar" na topbar, ao lado do relatório (1x)
+  function ensureLayoutButton() {
+    if (document.getElementById('btn-personalizar')) return;
+    const topbar = document.querySelector('.topbar');
+    if (!topbar) return;
+    const rel = document.getElementById('btn-relatorio');
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.id = 'btn-personalizar';
+    btn.className = 'btn-personalizar';
+    btn.setAttribute('aria-label', 'Personalizar painéis desta tela');
+    btn.title = 'Personalizar painéis desta tela';
+    btn.innerHTML =
+      '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" ' +
+        'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+        '<line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line>' +
+        '<line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line>' +
+        '<line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line>' +
+        '<line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line>' +
+        '<line x1="17" y1="16" x2="23" y2="16"></line></svg>' +
+      '<span>Personalizar</span>';
+    btn.addEventListener('click', openLayoutDrawer);
+    if (rel && rel.parentNode) rel.parentNode.insertBefore(btn, rel);
+    else topbar.appendChild(btn);
+  }
+
+  // abre o drawer de personalização da tela atual
+  function openLayoutDrawer() {
+    const tela = telaAtual();
+    const items = manageableCards();
+    if (!items.length) {
+      CK.openDrawer({
+        title: 'Personalizar painéis',
+        render: function (body) {
+          body.innerHTML = '<div class="ck-lay-vazio">Nenhum painel gerenciável nesta tela.</div>';
+        },
+      });
+      return;
+    }
+    const tituloByKey = {};
+    items.forEach(function (it) { tituloByKey[it.key] = it.titulo; });
+
+    loadLayout(tela).then(function (saved) {
+      // estado de trabalho: ordem = salvos presentes + novos (posição natural ao fim)
+      const present = items.map(function (it) { return it.key; });
+      const work = [];
+      (saved.ordem || []).forEach(function (k) {
+        if (present.indexOf(k) !== -1 && work.indexOf(k) === -1) work.push(k);
+      });
+      present.forEach(function (k) { if (work.indexOf(k) === -1) work.push(k); });
+      const hidden = {};
+      (saved.ocultos || []).forEach(function (k) { hidden[k] = true; });
+
+      const close = CK.openDrawer({
+        title: 'Personalizar painéis',
+        subtitle: 'Marque para exibir · use ↑ ↓ para reordenar',
+        render: function (body) {
+          const list = document.createElement('ul');
+          list.className = 'ck-lay-list';
+          list.setAttribute('role', 'list');
+
+          const msg = document.createElement('div');
+          msg.className = 'ck-lay-msg';
+          msg.setAttribute('role', 'alert');
+
+          function renderList() {
+            list.innerHTML = '';
+            work.forEach(function (key, idx) {
+              const titulo = tituloByKey[key] || key;
+              const li = document.createElement('li');
+              li.className = 'ck-lay-row' + (hidden[key] ? ' oculto' : '');
+
+              const chk = document.createElement('input');
+              chk.type = 'checkbox';
+              chk.className = 'ck-lay-chk';
+              chk.checked = !hidden[key];
+              chk.setAttribute('aria-label', 'Exibir painel ' + titulo);
+              chk.addEventListener('change', function () {
+                if (chk.checked) delete hidden[key]; else hidden[key] = true;
+                li.classList.toggle('oculto', !chk.checked);
+              });
+
+              const lbl = document.createElement('span');
+              lbl.className = 'ck-lay-titulo';
+              lbl.textContent = titulo;                 // textContent → seguro
+              lbl.title = titulo;
+
+              const up = document.createElement('button');
+              up.type = 'button';
+              up.className = 'ck-lay-mv';
+              up.textContent = '↑';
+              up.setAttribute('aria-label', 'Mover ' + titulo + ' para cima');
+              up.disabled = idx === 0;
+              up.addEventListener('click', function () {
+                if (idx === 0) return;
+                work.splice(idx - 1, 0, work.splice(idx, 1)[0]);
+                renderList();
+              });
+
+              const down = document.createElement('button');
+              down.type = 'button';
+              down.className = 'ck-lay-mv';
+              down.textContent = '↓';
+              down.setAttribute('aria-label', 'Mover ' + titulo + ' para baixo');
+              down.disabled = idx === work.length - 1;
+              down.addEventListener('click', function () {
+                if (idx === work.length - 1) return;
+                work.splice(idx + 1, 0, work.splice(idx, 1)[0]);
+                renderList();
+              });
+
+              li.appendChild(chk);
+              li.appendChild(lbl);
+              li.appendChild(up);
+              li.appendChild(down);
+              list.appendChild(li);
+            });
+          }
+          renderList();
+
+          const foot = document.createElement('div');
+          foot.className = 'ck-lay-foot';
+
+          const bRestaurar = document.createElement('button');
+          bRestaurar.type = 'button';
+          bRestaurar.className = 'ck-lay-btn sec';
+          bRestaurar.textContent = 'Restaurar padrão';
+          bRestaurar.setAttribute('aria-label', 'Restaurar layout padrão (tudo visível, ordem natural)');
+
+          const bSalvar = document.createElement('button');
+          bSalvar.type = 'button';
+          bSalvar.className = 'ck-lay-btn prim';
+          bSalvar.textContent = 'Salvar';
+
+          function trava(v) { bSalvar.disabled = v; bRestaurar.disabled = v; }
+
+          function persistir(config, aoOk) {
+            trava(true);
+            msg.textContent = '';
+            CK.api('/api/layout/' + encodeURIComponent(tela),
+                   { method: 'PUT', body: { config: config } })
+              .then(function () {
+                _layoutCache[tela] = { ordem: config.ordem, ocultos: config.ocultos };
+                close();
+                aoOk();
+              }, function (e) {
+                trava(false);
+                if (e && e.status === 401) { close(); return; } // overlay já exibido
+                msg.textContent = 'Falha ao salvar. Tente novamente.';
+              });
+          }
+
+          bSalvar.addEventListener('click', function () {
+            const ocultos = work.filter(function (k) { return hidden[k]; });
+            const config = { ordem: work.slice(), ocultos: ocultos };
+            persistir(config, function () {
+              if (telaAtual() === tela) applyLayout(_layoutCache[tela]);
+            });
+          });
+
+          bRestaurar.addEventListener('click', function () {
+            // limpa a config → tudo visível, ordem natural (re-render devolve o DOM original)
+            persistir({ ordem: [], ocultos: [] }, function () {
+              if (telaAtual() === tela) CK.route();
+            });
+          });
+
+          foot.appendChild(msg);
+          foot.appendChild(bRestaurar);
+          foot.appendChild(bSalvar);
+
+          body.appendChild(list);
+          body.appendChild(foot);
+        },
+      });
+    }, function () { /* 401/erro → não abre alterações; overlay tratado em CK.api */ });
+  }
+
+  // Chamável a cada render (idempotente). Instala CSS+botão (1x) e aplica o layout.
+  CK.layoutInit = function () {
+    ensureLayoutCSS();
+    ensureLayoutButton();
+    const tela = telaAtual();
+    loadLayout(tela).then(function (cfg) {
+      if (telaAtual() === tela) applyLayout(cfg);   // ignora se a tela já mudou
+    }, function () { /* 401/erro → tudo visível (default) */ });
+  };
+
   /* ─── Drawer (slide-over) — nível 1 e 2 (empilhado) ─── */
   // CK.openDrawer({title, subtitle, render(bodyEl), level:1|2}) → função close()
   CK.openDrawer = function (cfg) {
@@ -704,8 +1039,9 @@
       // presentes. O MutationObserver cobre os cards renderizados de forma
       // assíncrona; a varredura pós-promessa cobre o caso síncrono comum.
       CK.exportInit();
+      CK.layoutInit();
       if (ret && typeof ret.then === 'function') {
-        ret.then(() => CK.exportInit(), e => {
+        ret.then(() => { CK.exportInit(); CK.layoutInit(); }, e => {
           if (e && e.status === 401) return; // overlay de login já exibido
           console.error('CK.route render:', e);
           container.innerHTML = '<div class="empty-state">Erro ao carregar dados. Tente novamente.</div>';
