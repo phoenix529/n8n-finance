@@ -40,6 +40,10 @@ services:
       GDRIVE_FOLDER_ID: ${GDRIVE_FOLDER_ID:-}                       # pasta/Shared Drive das planilhas
       GOOGLE_APPLICATION_CREDENTIALS: /opt/cockpit-ref/secrets/gdrive_sa.json
       COCKPIT_PASSWORD: ${COCKPIT_PASSWORD:-}                       # senha de acesso do Cockpit app (/app)
+      # Integração COR (Fase 2) — valores só no .env do servidor; ROTACIONAR o secret.
+      COR_API_KEY: ${COR_API_KEY:-}
+      COR_CLIENT_SECRET: ${COR_CLIENT_SECRET:-}
+      COR_BASE_URL: ${COR_BASE_URL:-https://api.projectcor.com/v1}
     volumes:
       # Planilhas confidenciais do cliente: ficam SÓ no servidor, montadas em runtime.
       - ../data:/opt/cockpit-ref/data
