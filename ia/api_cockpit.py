@@ -100,6 +100,44 @@ def _tipo_canonico(label):
         return "BVS"
     return "Outras"
 
+
+# --- Custo por cliente (Painel de custos) ------------------------------------
+# Só o REF+ tem times DEDICADOS: o departamento carrega um SUFIXO de cliente após
+# ' - ' (ex.: "Criação - AB"). Mapa suffix→cliente canônico (case-insensitive).
+# Depts SEM sufixo mapeado = COMPARTILHADO (overhead, rateado por receita).
+_DEDICADO_SUFIXO = {"AB": "AMBEV", "LOCALIZA": "LOCALIZA",
+                    "SAFRA": "SAFRA", "TEC": "TECBAN"}
+_DEDICADO_CLIENTES = set(_DEDICADO_SUFIXO.values())   # AMBEV, LOCALIZA, SAFRA, TECBAN
+
+
+def _dep_cliente(dep):
+    """Cliente canônico de um departamento pelo sufixo após ' - ' (última parte,
+    upper, sem acento); None = COMPARTILHADO (rateio de overhead)."""
+    partes = str(dep or "").split(" - ")
+    return _DEDICADO_SUFIXO.get(_sem_acento(partes[-1]).strip().upper())
+
+
+def _cliente_canon(nome):
+    """Chave canônica de cliente unificando os nomes de fee e de receita variável.
+    Os 4 clientes com time dedicado casam por substring (fee 'AMBEV'/'AMBEV S.A.',
+    'LOCALIZA'/'LOCALIZA (MIDIA)'/'LOCALIZA RENT', 'SAFRA'/'BANCO SAFRA S A',
+    'TECBAN'); os demais = nome sem o qualificador após ' - ' ou ' ('."""
+    s = re.sub(r"\s+", " ", _sem_acento(nome).upper()).strip()
+    s = _ALIAS_CLIENTE.get(s, s)          # unifica grafias look-alike (fee vs variável)
+    for canon in _DEDICADO_CLIENTES:
+        if canon in s:
+            return canon
+    return re.split(r"\s+-\s+|\s+\(", s, maxsplit=1)[0].strip() or "—"
+
+
+# Grafias diferentes do MESMO cliente entre a aba de Fees e a de receita variável
+# (evita linhas duplicadas no custo-por-cliente). Chave já normalizada (upper/sem acento).
+_ALIAS_CLIENTE = {
+    "DOLLAR APP": "DOLARAPP", "DOLLARAPP": "DOLARAPP", "DOLAR APP": "DOLARAPP",
+    "ZEISS VISION BRASIL": "ZEISS",
+}
+
+
 router = APIRouter(prefix="/api")
 
 
@@ -1173,6 +1211,93 @@ def receita_tipo(slug: str, ano: int | None = None, user=Depends(require_session
 
         return {"ano": ano, "realizado_ate": _realizado_ate(ano),
                 "tipos": TIPOS_RECEITA, "meses": meses, "mix": mix}
+
+
+@router.get("/custo-cliente/{slug}")
+def custo_cliente(slug: str, ano: int | None = None, user=Depends(require_session)):
+    """Custo de pessoas por cliente (folha do ANO inteiro).
+    Custo DEDICADO = Σ folha dos departamentos com sufixo do cliente (só REF+ tem);
+    OVERHEAD = folha COMPARTILHADA rateada por receita (fee_anual + variável).
+    Reconcilia: Σdedicado + Σoverhead == folha total do ano. grupo = soma das 5
+    (mas só o REF+ tem times dedicados). Regra de rateio DEFAULT — confirmar c/ cliente."""
+    emp = _slug_or_404(slug)               # aceita 'grupo'
+    _autoriza(slug, user)                  # RBAC: grupo exige 'todas'
+    ef, ep = _emp_where(emp)
+    with _conn() as con:
+        cur = con.cursor()
+        _ensure_tables(cur)
+        ano = ano or _ano_default(cur)
+
+        # 1) Folha do ano por departamento → dedicado por cliente vs compartilhado
+        cur.execute(f"""SELECT f.departamento, SUM(f.total)
+            FROM fato_folha_mensal f JOIN dim_empresa e ON e.id=f.empresa_id
+            JOIN dim_periodo p ON p.id=f.periodo_id
+            WHERE p.ano=%s{ef} GROUP BY f.departamento""", [ano] + ep)
+        dedicado_por = {}
+        folha_dedicada = folha_compart = 0.0
+        for dep, tot in cur.fetchall():
+            v = float(tot or 0)
+            cli = _dep_cliente(dep)
+            if cli:
+                dedicado_por[cli] = dedicado_por.get(cli, 0.0) + v
+                folha_dedicada += v
+            else:
+                folha_compart += v
+        folha_total = folha_dedicada + folha_compart
+
+        # 2) Receita por cliente canônico = fee anual (fee_mensal*12) + variável
+        receita_por = {}
+        cur.execute(f"""SELECT ff.cliente, ff.fee_mensal
+            FROM fato_fee_cliente ff JOIN dim_empresa e ON e.id=ff.empresa_id
+            WHERE ff.ano=%s{ef}""", [ano] + ep)
+        for cli, fm in cur.fetchall():
+            k = _cliente_canon(cli)
+            receita_por[k] = receita_por.get(k, 0.0) + float(fm or 0) * 12.0
+        cur.execute(f"""SELECT cl.nome, SUM(r.valor)
+            FROM fato_receita_cliente_mensal r JOIN dim_cliente cl ON cl.id=r.cliente_id
+            JOIN dim_empresa e ON e.id=r.empresa_id JOIN dim_periodo p ON p.id=r.periodo_id
+            WHERE p.ano=%s{ef} GROUP BY cl.nome""", [ano] + ep)
+        for nome, v in cur.fetchall():
+            k = _cliente_canon(nome)
+            receita_por[k] = receita_por.get(k, 0.0) + float(v or 0)
+        # garante linha para todo cliente dedicado (mesmo sem receita cadastrada)
+        for k in dedicado_por:
+            receita_por.setdefault(k, 0.0)
+
+        if not receita_por and folha_total == 0:
+            return {"ano": ano, "clientes": []}
+
+        soma_receita = sum(receita_por.values())
+        # Rateio do overhead: por participação na receita; se ninguém tem receita
+        # (soma=0) mas há folha compartilhada, distribui IGUALMENTE — assim Σcusto
+        # continua == folha total (a reconciliação não quebra).
+        n_cli = len(receita_por) or 1
+        clientes, soma_over = [], 0.0
+        for cli, rec in receita_por.items():
+            if soma_receita:
+                overhead = folha_compart * rec / soma_receita
+            else:
+                overhead = folha_compart / n_cli
+            soma_over += overhead
+            dedic = dedicado_por.get(cli, 0.0)
+            custo = dedic + overhead
+            margem = rec - custo
+            clientes.append({
+                "cliente": cli, "receita": _money(rec),
+                "custo_dedicado": _money(dedic), "overhead": _money(overhead),
+                "custo_total": _money(custo), "margem": _money(margem),
+                "pct_margem": _pct(margem, rec), "dedicado": cli in _DEDICADO_CLIENTES})
+        clientes.sort(key=lambda c: -(c["receita"] or 0.0))
+
+        soma_custo = folha_dedicada + soma_over          # == Σ custo_total
+        diff = round(soma_custo - folha_total, 2)
+        return {
+            "ano": ano, "clientes": clientes,
+            "totais": {"receita": _money(soma_receita),
+                       "custo": _money(soma_custo), "margem": _money(soma_receita - soma_custo)},
+            "folha": {"total": _money(folha_total), "dedicada": _money(folha_dedicada),
+                      "compartilhada": _money(folha_compart)},
+            "reconciliacao": {"ok": abs(diff) < 0.01, "diff": diff}}
 
 
 # --- Folha — LGPD: nunca expor salário exato, só a banda ---------------------

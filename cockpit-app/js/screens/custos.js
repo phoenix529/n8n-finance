@@ -616,6 +616,108 @@
     }
   }
 
+  /* ── PANEL 05: custo de pessoas por cliente (NEW /api/custo-cliente) ──
+     Contrato: {ano, clientes:[{cliente,receita,custo_dedicado,overhead,
+     custo_total,margem,pct_margem,dedicado}] desc por receita,
+     totais:{receita,custo,margem}, folha:{...}, reconciliacao:{ok,diff}} */
+  function pintaCustoCliente(el, data) {
+    var box   = el.querySelector('[data-ck="cc-box"]');
+    var tabela = el.querySelector('[data-ck="cc-tabela"]');
+    if (!box) return;
+    var clientes = (data && data.clientes) || [];
+    if (!clientes.length) {
+      box.innerHTML = '<p class="empty-state">Sem dados de custo por cliente para o ano.</p>';
+      if (tabela) tabela.innerHTML = '';
+      return;
+    }
+    // top N por receita (já vem desc da API; reforça a ordenação)
+    var top = clientes.slice().sort(function (a, b) { return n(b.receita) - n(a.receita); }).slice(0, 10);
+
+    box.innerHTML = '<canvas data-ck="cc-canvas" role="img"></canvas>';
+    var canvas = box.querySelector('[data-ck="cc-canvas"]');
+    canvas.setAttribute('aria-label',
+      'Barras horizontais empilhadas por cliente (ordenado por receita): custo dedicado, ' +
+      'overhead rateado e margem. ' +
+      top.map(function (c) {
+        return esc(c.cliente) + ' margem ' + fmtMoeda(c.margem);
+      }).join('; ') + '.');
+
+    novoChart(canvas, {
+      type: 'bar',
+      data: {
+        labels: top.map(function (c) { return c.cliente; }),
+        datasets: [
+          { label: 'Custo dedicado', data: top.map(function (c) { return n(c.custo_dedicado); }),
+            backgroundColor: '#D9DA00', borderRadius: 3, borderSkipped: false, stack: 'c' },
+          { label: 'Overhead (rateio)', data: top.map(function (c) { return n(c.overhead); }),
+            backgroundColor: '#81807C', borderRadius: 3, borderSkipped: false, stack: 'c' },
+          { label: 'Margem', data: top.map(function (c) { return n(c.margem); }),
+            backgroundColor: top.map(function (c) { return n(c.margem) < 0 ? '#E5484D' : '#2E7D32'; }),
+            borderRadius: 3, borderSkipped: false, stack: 'c' }
+        ]
+      },
+      options: {
+        indexAxis: 'y',
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { position: 'bottom', labels: { color: '#81807C', font: { size: 10 }, boxWidth: 12, padding: 12 } },
+          tooltip: tooltipDark({
+            callbacks: {
+              label: function (c) { return ' ' + c.dataset.label + ': ' + fmtMoeda(c.parsed.x); },
+              afterBody: function (items) {
+                var cl = top[items[0].dataIndex];
+                return '\nReceita: ' + fmtMoeda(cl.receita) + ' · Margem: ' + fmtPct(cl.pct_margem) +
+                  (cl.dedicado ? '' : '\n(sem time dedicado — só overhead)');
+              }
+            }
+          })
+        },
+        scales: {
+          x: { stacked: true, grid: { color: 'rgba(0,0,0,0.05)' },
+               ticks: { color: '#81807C', font: { size: 10 }, callback: function (v) { return 'R$' + fmtShort(v); } },
+               border: { color: 'transparent' } },
+          y: { stacked: true, grid: { display: false }, ticks: { color: '#1C1C1C', font: { size: 10 } },
+               border: { color: 'rgba(0,0,0,0.07)' } }
+        }
+      }
+    });
+
+    // tabela compacta: cliente · receita · custo · margem · %
+    if (tabela) {
+      var linhas = top.map(function (c) {
+        var neg = n(c.margem) < 0;
+        return '<tr>' +
+          '<td style="padding:6px 8px;font-size:12px;color:var(--text-1);white-space:nowrap;">' +
+            esc(c.cliente) + (c.dedicado ? ' <span class="chip accent" style="font-size:9px;padding:1px 5px;">dedicado</span>' : '') + '</td>' +
+          '<td style="padding:6px 8px;font-family:\'JetBrains Mono\',monospace;font-size:11px;text-align:right;color:var(--text-1);">' + fmtMoeda(c.receita) + '</td>' +
+          '<td style="padding:6px 8px;font-family:\'JetBrains Mono\',monospace;font-size:11px;text-align:right;color:var(--text-2);">' + fmtMoeda(c.custo_total) + '</td>' +
+          '<td style="padding:6px 8px;font-family:\'JetBrains Mono\',monospace;font-size:11px;text-align:right;' + (neg ? 'color:var(--red);' : 'color:var(--text-1);') + '">' + fmtMoeda(c.margem) + '</td>' +
+          '<td style="padding:6px 8px;font-family:\'JetBrains Mono\',monospace;font-size:11px;text-align:right;' + (neg ? 'color:var(--red);' : 'color:var(--text-2);') + '">' + fmtPct(c.pct_margem) + '</td>' +
+        '</tr>';
+      }).join('');
+      var t = data.totais || {};
+      tabela.innerHTML =
+        '<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;min-width:340px;">' +
+          '<thead><tr style="border-bottom:1px solid var(--border);">' +
+            '<th style="padding:6px 8px;text-align:left;font-size:10px;color:var(--text-3);font-weight:600;">Cliente</th>' +
+            '<th style="padding:6px 8px;text-align:right;font-size:10px;color:var(--text-3);font-weight:600;">Receita</th>' +
+            '<th style="padding:6px 8px;text-align:right;font-size:10px;color:var(--text-3);font-weight:600;">Custo</th>' +
+            '<th style="padding:6px 8px;text-align:right;font-size:10px;color:var(--text-3);font-weight:600;">Margem</th>' +
+            '<th style="padding:6px 8px;text-align:right;font-size:10px;color:var(--text-3);font-weight:600;">%</th>' +
+          '</tr></thead>' +
+          '<tbody>' + linhas + '</tbody>' +
+          (t.receita != null ? '<tfoot><tr style="border-top:1px solid var(--border);font-weight:700;">' +
+            '<td style="padding:6px 8px;font-size:11px;color:var(--text-1);">Total</td>' +
+            '<td style="padding:6px 8px;font-family:\'JetBrains Mono\',monospace;font-size:11px;text-align:right;color:var(--text-1);">' + fmtMoeda(t.receita) + '</td>' +
+            '<td style="padding:6px 8px;font-family:\'JetBrains Mono\',monospace;font-size:11px;text-align:right;color:var(--text-1);">' + fmtMoeda(t.custo) + '</td>' +
+            '<td style="padding:6px 8px;font-family:\'JetBrains Mono\',monospace;font-size:11px;text-align:right;color:var(--text-1);">' + fmtMoeda(t.margem) + '</td>' +
+            '<td style="padding:6px 8px;font-family:\'JetBrains Mono\',monospace;font-size:11px;text-align:right;color:var(--text-2);">' + fmtPct(n(t.receita) ? n(t.margem) / n(t.receita) * 100 : 0) + '</td>' +
+          '</tr></tfoot>' : '') +
+        '</table></div>';
+    }
+  }
+
   /* ── registro da tela ─────────────────────────────────────────── */
   CK.registerScreen('custos', {
     title: 'Cockpit de Custos — Folha Salarial',
@@ -702,6 +804,24 @@
               '</div>' +
             '</div>' +
           '</div>' +
+        '</div>' +
+
+        // PANEL 05 — Custo de pessoas por cliente (NEW /api/custo-cliente)
+        '<div class="chart-card" style="margin-top:24px;">' +
+          '<div class="card-header"><div>' +
+            '<div class="card-title">Custo de pessoas por cliente</div>' +
+            '<div class="card-subtitle">Folha do ano por cliente = custo do time dedicado + overhead rateado por receita · ordenado por receita</div>' +
+          '</div><div class="chip accent">Painel 05</div></div>' +
+          '<div class="grid-bot">' +
+            '<div class="chart-container" style="height:300px;" data-ck="cc-box">' +
+              '<p style="color:var(--text-3);font-size:12px;">Carregando…</p>' +
+            '</div>' +
+            '<div data-ck="cc-tabela"><p style="color:var(--text-3);font-size:12px;">Carregando…</p></div>' +
+          '</div>' +
+          '<p style="font-size:10px;color:var(--text-3);margin-top:10px;">' +
+            'Apenas Ambev, Localiza, Safra e TecBan têm time dedicado; os demais departamentos são compartilhados (overhead). ' +
+            'Regra de rateio padrão (overhead ∝ receita) — confirmar com o cliente.' +
+          '</p>' +
         '</div>';
 
       var sel = el.querySelector('[data-ck="mes-select"]');
@@ -752,6 +872,12 @@
           pega('/api/headcount/' + encodeURIComponent(slugHC) + qsAno()).then(function (hc) {
             if (!el.isConnected) return;
             pintaHeadcount(el, hc, total ? null : base, empSel);
+          });
+
+          // PANEL 05: custo de pessoas por cliente (ano) — grupo OU empresa selecionada
+          pega('/api/custo-cliente/' + encodeURIComponent(slugHC) + qsAno()).then(function (cc) {
+            if (!el.isConnected) return;
+            pintaCustoCliente(el, cc);
           });
 
           // 2) folha por empresa PERMITIDA (departamentos) — treemap, barras e drawers

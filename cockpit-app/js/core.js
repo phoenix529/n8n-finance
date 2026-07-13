@@ -321,6 +321,261 @@
     },
   };
 
+  /* ═══════════════════════════════════════════════════════════════
+     CK.exportInit() — exportação universal (PNG / XLSX-CSV)
+     ───────────────────────────────────────────────────────────────
+     Torna TODO quadro do cockpit exportável sem editar cada painel.
+     Varre #content atrás de .chart-card, injeta um botão "⤓" discreto
+     (canto sup. dir.) que abre um menu com "PNG" e "XLSX/CSV".
+       • PNG  — do <canvas> do card (fundo branco p/ tema claro) → download.
+       • CSV  — da instância Chart.js rastreada em CK.charts (labels +
+                datasets); se não houver gráfico, faz fallback p/ o <table>.
+     Idempotente: marca cards já processados. Um MutationObserver em
+     #content reprocessa cards renderizados de forma assíncrona.
+     Não depende de nada nas telas — trabalha 100% a partir do DOM.
+     ═══════════════════════════════════════════════════════════════ */
+
+  // localiza a instância Chart.js (rastreada em CK.charts._list) de um canvas
+  function chartForCanvas(canvas) {
+    const list = (CK.charts && CK.charts._list) || [];
+    for (let i = 0; i < list.length; i++) {
+      const c = list[i];
+      if (c && (c.canvas === canvas || (c.ctx && c.ctx.canvas === canvas))) return c;
+    }
+    return null;
+  }
+
+  // título legível do card (para nome de arquivo e cabeçalho)
+  function cardTitulo(card) {
+    const t = card.querySelector('.card-title');
+    return (t ? t.textContent : '').trim() || 'quadro';
+  }
+
+  // nome de arquivo seguro: "titulo-ano.ext"
+  function nomeArquivo(card, ext) {
+    const base = (cardTitulo(card) + '-' + (CK.state.ano || ''))
+      .toLowerCase()
+      .normalize('NFD').replace(/[̀-ͯ]/g, '')  // remove acentos
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 80) || 'quadro';
+    return base + '.' + ext;
+  }
+
+  // dispara download de um Blob/URL
+  function baixar(url, nome, revoga) {
+    const a = document.createElement('a');
+    a.href = url; a.download = nome;
+    document.body.appendChild(a); a.click(); a.remove();
+    if (revoga) setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+
+  // ── PNG: canvas → PNG com fundo branco (tema claro) ──
+  function exportarPNG(card) {
+    const canvas = card.querySelector('canvas');
+    if (!canvas) { alert('Este quadro não tem gráfico para exportar como imagem.'); return; }
+    // recompõe sobre fundo branco (o canvas do Chart.js é transparente)
+    const w = canvas.width, h = canvas.height;
+    const tmp = document.createElement('canvas');
+    tmp.width = w; tmp.height = h;
+    const ctx = tmp.getContext('2d');
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(canvas, 0, 0);
+    let url;
+    try { url = tmp.toDataURL('image/png'); }
+    catch (e) { alert('Não foi possível gerar a imagem.'); return; }
+    baixar(url, nomeArquivo(card, 'png'), false);
+  }
+
+  // escapa uma célula p/ CSV (separador ';', aspas duplas RFC-4180)
+  function csvCell(v) {
+    let s = (v == null) ? '' : String(v);
+    if (/[";\n\r]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"';
+    return s;
+  }
+  // número → string pt-BR (vírgula decimal) p/ o Excel; texto passa direto
+  function csvNum(v) {
+    if (typeof v === 'number' && isFinite(v)) return String(v).replace('.', ',');
+    if (v && typeof v === 'object') {                       // ponto {x,y} do Chart.js
+      const n = (v.y != null) ? v.y : (v.v != null ? v.v : null);
+      if (typeof n === 'number' && isFinite(n)) return String(n).replace('.', ',');
+    }
+    return v == null ? '' : String(v);
+  }
+  // monta o texto CSV a partir de matriz de linhas (arrays de células)
+  function montaCSV(linhas) {
+    const corpo = linhas.map(row => row.map(csvCell).join(';')).join('\r\n');
+    return '﻿' + corpo;   // BOM → Excel reconhece UTF-8
+  }
+  function baixarCSV(card, linhas) {
+    const blob = new Blob([montaCSV(linhas)], { type: 'text/csv;charset=utf-8;' });
+    baixar(URL.createObjectURL(blob), nomeArquivo(card, 'csv'), true);
+  }
+
+  // ── CSV a partir da instância Chart.js ──
+  function csvDeChart(chart, card) {
+    const data = chart.data || {};
+    const labels = data.labels || [];
+    const ds = data.datasets || [];
+    const cab = ['']; // 1ª coluna = rótulos das linhas (categorias/eixo X)
+    ds.forEach((d, i) => cab.push(d.label != null ? d.label : ('Série ' + (i + 1))));
+    const linhas = [cab];
+    const n = labels.length || ds.reduce((m, d) => Math.max(m, (d.data || []).length), 0);
+    for (let i = 0; i < n; i++) {
+      const row = [labels[i] != null ? labels[i] : ('#' + (i + 1))];
+      ds.forEach(d => row.push(csvNum((d.data || [])[i])));
+      linhas.push(row);
+    }
+    baixarCSV(card, linhas);
+  }
+
+  // ── CSV a partir de um <table> (fallback p/ cards de tabela) ──
+  function csvDeTabela(table, card) {
+    const linhas = [];
+    table.querySelectorAll('tr').forEach(tr => {
+      const cels = tr.querySelectorAll('th,td');
+      if (!cels.length) return;
+      const row = [];
+      cels.forEach(td => row.push(td.textContent.replace(/\s+/g, ' ').trim()));
+      linhas.push(row);
+    });
+    if (!linhas.length) { alert('Nada para exportar neste quadro.'); return; }
+    baixarCSV(card, linhas);
+  }
+
+  // decide a fonte dos dados do card e exporta CSV
+  function exportarCSV(card) {
+    const canvas = card.querySelector('canvas');
+    const chart = canvas && chartForCanvas(canvas);
+    if (chart) { csvDeChart(chart, card); return; }
+    const table = card.querySelector('table');
+    if (table) { csvDeTabela(table, card); return; }
+    alert('Este quadro não tem dados tabulares para exportar.');
+  }
+
+  // um card é exportável se tiver gráfico OU tabela
+  function cardExportavel(card) {
+    return !!(card.querySelector('canvas') || card.querySelector('table'));
+  }
+
+  // fecha qualquer menu de exportação aberto
+  function fechaMenuExport() {
+    const m = document.querySelector('.ck-export-menu');
+    if (m) m.remove();
+    document.removeEventListener('click', fechaMenuExport, true);
+    document.removeEventListener('keydown', onKeyExport, true);
+  }
+  function onKeyExport(ev) { if (ev.key === 'Escape') fechaMenuExport(); }
+
+  // abre o menu ancorado ao botão do card
+  function abreMenuExport(btn, card) {
+    fechaMenuExport();
+    const menu = document.createElement('div');
+    menu.className = 'ck-export-menu';
+    menu.setAttribute('role', 'menu');
+    const temGrafico = !!card.querySelector('canvas');
+    const itens = [];
+    if (temGrafico) itens.push(['png', 'PNG (imagem)']);
+    itens.push(['csv', 'XLSX/CSV']);
+    itens.forEach(([tipo, rot]) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'ck-export-item';
+      b.setAttribute('role', 'menuitem');
+      b.textContent = rot;
+      b.addEventListener('click', function (ev) {
+        ev.stopPropagation();
+        fechaMenuExport();
+        if (tipo === 'png') exportarPNG(card); else exportarCSV(card);
+      });
+      menu.appendChild(b);
+    });
+    // posiciona sob o botão (dentro do card, que é position:relative)
+    menu.style.top = (btn.offsetTop + btn.offsetHeight + 4) + 'px';
+    menu.style.right = '12px';
+    card.appendChild(menu);
+    const first = menu.querySelector('.ck-export-item');
+    if (first) first.focus();
+    // fechar ao clicar fora / Esc (captura p/ pegar antes de outros handlers)
+    setTimeout(() => {
+      document.addEventListener('click', fechaMenuExport, true);
+      document.addEventListener('keydown', onKeyExport, true);
+    }, 0);
+  }
+
+  // injeta o botão "⤓" num card ainda não processado
+  function injetaBotao(card) {
+    if (card.dataset.ckExport) return;         // já processado (idempotente)
+    if (!cardExportavel(card)) return;         // nada a exportar (ex.: card de flags)
+    card.dataset.ckExport = '1';
+    card.classList.add('ck-has-export');
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'ck-export-btn';
+    btn.setAttribute('aria-label', 'Exportar quadro');
+    btn.title = 'Exportar quadro';
+    btn.textContent = '⤓';
+    btn.addEventListener('click', function (ev) {
+      ev.stopPropagation();
+      if (card.querySelector('.ck-export-menu')) { fechaMenuExport(); return; }
+      abreMenuExport(btn, card);
+    });
+    card.appendChild(btn);
+  }
+
+  // varre #content e injeta botões nos cards elegíveis (idempotente)
+  function scanExport() {
+    const root = document.getElementById('content');
+    if (!root) return;
+    root.querySelectorAll('.chart-card').forEach(injetaBotao);
+  }
+
+  // injeta o CSS do módulo uma única vez (tema claro)
+  function ensureExportCSS() {
+    if (document.getElementById('ck-export-style')) return;
+    const st = document.createElement('style');
+    st.id = 'ck-export-style';
+    st.textContent =
+      '.ck-has-export{position:relative;}' +
+      '.ck-export-btn{position:absolute;top:12px;right:12px;z-index:5;' +
+        'width:26px;height:26px;padding:0;line-height:24px;text-align:center;' +
+        'font-size:15px;cursor:pointer;color:var(--text-3);' +
+        'background:var(--bg-card);border:1px solid var(--border);' +
+        'border-radius:var(--radius-sm,6px);opacity:0;transition:opacity .15s,color .15s,border-color .15s;}' +
+      '.chart-card:hover .ck-export-btn,.ck-export-btn:focus-visible,' +
+        '.ck-has-export:focus-within .ck-export-btn{opacity:1;}' +
+      '.ck-export-btn:hover{color:var(--text-1);border-color:var(--accent,#D9DA00);}' +
+      '.ck-export-btn:focus-visible{outline:2px solid var(--accent,#D9DA00);outline-offset:2px;}' +
+      '.ck-export-menu{position:absolute;z-index:20;min-width:140px;padding:4px;' +
+        'background:var(--bg-card,#fff);border:1px solid var(--border,#E6E3DC);' +
+        'border-radius:var(--radius,10px);box-shadow:0 6px 24px rgba(0,0,0,0.12);}' +
+      '.ck-export-item{display:block;width:100%;text-align:left;' +
+        'padding:8px 10px;font-size:12px;font-weight:500;color:var(--text-1,#1C1C1C);' +
+        'background:none;border:0;border-radius:var(--radius-sm,6px);cursor:pointer;}' +
+      '.ck-export-item:hover,.ck-export-item:focus-visible{background:var(--accent-dim,rgba(217,218,0,0.16));' +
+        'color:var(--text-1,#1C1C1C);outline:none;}';
+    document.head.appendChild(st);
+  }
+
+  let _exportObserver = null;
+  // Chamável a cada render (idempotente). Instala CSS + observer 1x e varre agora.
+  CK.exportInit = function () {
+    ensureExportCSS();
+    const root = document.getElementById('content');
+    if (root && !_exportObserver) {
+      // reprocessa cards renderizados de forma assíncrona pelas telas
+      _exportObserver = new MutationObserver(function () {
+        if (CK._exportRaf) return;
+        CK._exportRaf = requestAnimationFrame(function () {
+          CK._exportRaf = 0; scanExport();
+        });
+      });
+      _exportObserver.observe(root, { childList: true, subtree: true });
+    }
+    scanExport();
+  };
+
   /* ─── Drawer (slide-over) — nível 1 e 2 (empilhado) ─── */
   // CK.openDrawer({title, subtitle, render(bodyEl), level:1|2}) → função close()
   CK.openDrawer = function (cfg) {
@@ -445,8 +700,12 @@
 
     try {
       const ret = def.render(container, route.params);
-      if (ret && typeof ret.catch === 'function') {
-        ret.catch(e => {
+      // Exportação universal: instala CSS+observer (1x) e varre os cards já
+      // presentes. O MutationObserver cobre os cards renderizados de forma
+      // assíncrona; a varredura pós-promessa cobre o caso síncrono comum.
+      CK.exportInit();
+      if (ret && typeof ret.then === 'function') {
+        ret.then(() => CK.exportInit(), e => {
           if (e && e.status === 401) return; // overlay de login já exibido
           console.error('CK.route render:', e);
           container.innerHTML = '<div class="empty-state">Erro ao carregar dados. Tente novamente.</div>';
