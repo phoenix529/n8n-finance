@@ -848,6 +848,27 @@ def despesas(slug: str, ano: int | None = None, user=Depends(require_session)):
         return {"ano": ano, "meses": meses, "ranking": ranking}
 
 
+@router.get("/relatorio/{slug}")
+def relatorio(slug: str, ano: int | None = None, mes: int | None = None,
+              user=Depends(require_session)):
+    """Gera o relatório mensal em PowerPoint EDITÁVEL (.pptx) e devolve p/ download.
+    RBAC: respeita o escopo (grupo exige 'todas'; empresa precisa estar no escopo)."""
+    _autoriza(slug, user)
+    import sys as _s, os as _o
+    _rel = _o.path.join(_o.path.dirname(_o.path.abspath(__file__)), "..", "relatorios")
+    if _rel not in _s.path:
+        _s.path.insert(0, _rel)
+    import relatorio_mensal
+    try:
+        blob, nome = relatorio_mensal.gerar_pptx(slug, ano, mes)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return Response(
+        content=blob,
+        media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        headers={"Content-Disposition": f'attachment; filename="{nome}"'})
+
+
 @router.get("/historico/{slug}")
 def historico(slug: str, user=Depends(require_session)):
     emp = _slug_or_404(slug)

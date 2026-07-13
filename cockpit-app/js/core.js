@@ -596,6 +596,39 @@
     if (window.confirm('Deseja sair da sua sessão?')) CK.logout();
   });
 
+  /* ─── Baixar relatório mensal (PPTX editável) ───
+     slug da rota atual (macro/consolidado → grupo; micro/<slug> → empresa;
+     telas sem empresa → 1ª permitida). O download carrega o cookie de sessão. */
+  CK.slugAtual = function () {
+    const r = parseHash();
+    if (r.name === 'micro' && r.params.slug) return r.params.slug;
+    if (r.name === 'macro') return CK.temAcesso('grupo') ? 'grupo' : (CK.empresasPermitidas()[0] || {}).slug;
+    return CK.temAcesso('grupo') ? 'grupo' : (CK.empresasPermitidas()[0] || {}).slug;
+  };
+  $('#btn-relatorio') && $('#btn-relatorio').addEventListener('click', function () {
+    const slug = CK.slugAtual();
+    if (!slug) { alert('Sem empresa no escopo para gerar relatório.'); return; }
+    const btn = $('#btn-relatorio');
+    const ano = CK.state.ano || new Date().getFullYear();
+    btn.disabled = true; btn.classList.add('carregando');
+    // download via fetch (mesma-origem, cookie) → blob → <a download>
+    fetch('/api/relatorio/' + encodeURIComponent(slug) + '?ano=' + ano, { credentials: 'same-origin' })
+      .then(function (r) {
+        if (r.status === 401) { showLogin(); throw new Error('401'); }
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const nome = (r.headers.get('Content-Disposition') || '').match(/filename="?([^"]+)"?/);
+        return r.blob().then(function (b) { return { b: b, nome: nome ? nome[1] : 'relatorio.pptx' }; });
+      })
+      .then(function (o) {
+        const url = URL.createObjectURL(o.b);
+        const a = document.createElement('a');
+        a.href = url; a.download = o.nome; document.body.appendChild(a); a.click();
+        a.remove(); URL.revokeObjectURL(url);
+      })
+      .catch(function (e) { if (e.message !== '401') alert('Falha ao gerar o relatório: ' + e.message); })
+      .finally(function () { btn.disabled = false; btn.classList.remove('carregando'); });
+  });
+
   /* ─── Init ─── */
   CK.init = async function () {
     try {

@@ -30,3 +30,4 @@ __pycache__/
 .claude/
 *_tmp.json
 dash_tmp.json
+data/relatorios/
