@@ -28,7 +28,7 @@ FOLDER_ID = os.environ.get("GDRIVE_FOLDER_ID", "").strip()
 SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 FOLDER_MIME = "application/vnd.google-apps.folder"
-YEAR_RE = re.compile(r"^20\d{2}$")           # subpasta de ano: 2018..2099
+YEAR_RE = re.compile(r"20\d{2}")             # ano EM QUALQUER PARTE do nome da subpasta
 EXPECTED = ("REF+", "BD", "4PR", "Viv", "Zup")
 
 
@@ -58,11 +58,16 @@ def _list(svc, q, fields):
 
 
 def _year_subfolders(svc, folder_id):
-    """Subpastas cujo nome é um ano (ex.: 2026). Lista [(id, nome)]."""
+    """Subpastas cujo nome CONTÉM um ano — aceita '2026' OU
+    'DREs Contabil - Grupo REF - 2026'. Rótulo = o ano extraído (log limpo).
+    Pastas sem ano no nome (ex.: 'COR') são ignoradas."""
     q = f"'{folder_id}' in parents and trashed = false and mimeType = '{FOLDER_MIME}'"
-    return [(f["id"], f["name"].strip())
-            for f in _list(svc, q, "files(id,name)")
-            if YEAR_RE.match(f["name"].strip())]
+    out = []
+    for f in _list(svc, q, "files(id,name)"):
+        m = YEAR_RE.search(f.get("name", ""))
+        if m:
+            out.append((f["id"], m.group(0)))     # rótulo = ano (ex.: '2026')
+    return out
 
 
 def _dre_files_in(svc, folder_id):
