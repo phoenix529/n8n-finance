@@ -172,7 +172,7 @@
     if (todosFracao) vals = vals.map(function (v) { return v * 100; });
 
     var labels = anos.map(function (a) { return String(a.ano); });
-    var meta = (window.CK && CK.state && CK.state.metaEbit) || 8;   // meta configurável do backend
+    var meta = (window.CK && CK.state && CK.state.metaEbit != null) ? CK.state.metaEbit : 8;  // meta do backend (0 é válido)
     var cores = vals.map(function (v) {
       return v >= meta ? '#D9DA00' : v >= meta / 2 ? '#3B82F6' : v >= 0 ? '#81807C' : '#E5484D';
     });

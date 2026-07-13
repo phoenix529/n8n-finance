@@ -283,7 +283,7 @@
     var margemLiq = n(kpis.receita_bruta) ? n(kpis.receita_liquida) / n(kpis.receita_bruta) * 100 : 0;
     var margemAg = n(kpis.receita_bruta) ? n(kpis.resultado_agencia) / n(kpis.receita_bruta) * 100 : 0;
     var ebit = pctEscala(kpis.ebit_pct);
-    var meta = n(kpis.meta_ebit_pct) || 8;   // meta configurável do backend
+    var meta = kpis.meta_ebit_pct != null ? n(kpis.meta_ebit_pct) : 8;   // meta do backend (0 é válido)
     var resLiqPos = n(kpis.resultado_liquido) >= 0;
     var rbColabTxt = (rbColab != null && isFinite(rbColab)) ? fmtMoeda(rbColab) : '—';
 
