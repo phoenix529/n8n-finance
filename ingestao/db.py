@@ -106,7 +106,9 @@ def upsert_dre(empresa, df):
         for _, r in df.iterrows():
             cid = _conta_id(cur, r["account_description"], r["group"], tipos.get(r["account_description"]), cc, r.get("account_code"))
             pid = _periodo_id(cur, int(r["year"]), int(r["month"]), pc)
-            valores.append((emp_id, cid, pid, float(r["value"]), r["source"]))
+            _v = r["value"]
+            _val = None if (_v is None or (isinstance(_v, float) and _v != _v)) else float(_v)
+            valores.append((emp_id, cid, pid, _val, r["source"]))
         execute_values(cur, """
             INSERT INTO fato_dre_mensal (empresa_id, conta_id, periodo_id, valor, fonte)
             VALUES %s

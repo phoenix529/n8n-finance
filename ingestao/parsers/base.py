@@ -125,10 +125,19 @@ def parse_dre_base(path, company, year=2026):
                 taken.add(descricao)
                 for ci, mes in months.items():
                     v = row[ci - 1] if ci - 1 < len(row) else None
-                    val = float(v) if isinstance(v, (int, float)) else 0.0   # NaN -> 0.0
+                    if isinstance(v, (int, float)):
+                        val = round(float(v), 4)
+                    elif tipo == "result":
+                        # Linha de RESULTADO (RA/EBIT/Res.Líq.) com célula VAZIA ou #REF!
+                        # (ex.: Zup 2026, cujo resultado é calculado por fórmula externa
+                        # que está quebrada na origem) → NULL, não 0. Assim o cockpit
+                        # mostra "—" (dado pendente) em vez de um falso "0" enganoso.
+                        val = None
+                    else:
+                        val = 0.0                                     # receita/custo vazio -> 0
                     rows.append({"company": company, "year": year, "month": mes,
                                  "account_code": None, "account_description": descricao,
-                                 "group": grupo, "value": round(val, 4), "source": src})
+                                 "group": grupo, "value": val, "source": src})
                 break
     wb.close()
     df = pd.DataFrame(rows, columns=["company", "year", "month", "account_code",
