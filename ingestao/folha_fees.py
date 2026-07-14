@@ -50,8 +50,12 @@ CREATE TABLE IF NOT EXISTS fato_folha_mensal (
     salario      NUMERIC(14,2),
     extra        NUMERIC(14,2),
     total        NUMERIC(14,2),
+    total_mes    NUMERIC(14,2),
     UNIQUE (empresa_id, periodo_id, nome, departamento, cargo)
 );
+-- total_mes (col T "TOTAL MÊS" = custo total empresa). Migração idempotente
+-- p/ DBs que já tinham a tabela só com 'total' (col H, bruto).
+ALTER TABLE fato_folha_mensal ADD COLUMN IF NOT EXISTS total_mes NUMERIC(14,2);
 CREATE TABLE IF NOT EXISTS fato_fee_cliente (
     id         SERIAL PRIMARY KEY,
     empresa_id INT,
@@ -83,8 +87,9 @@ def _num(v):
 
 # ---- Folha -------------------------------------------------------------------
 def _folha_header(ws):
-    """Detecta a linha de cabeçalho (contém NOME e TOTAL) e devolve (linha, {COLUNA: idx})."""
-    for r, row in enumerate(ws.iter_rows(min_row=1, max_row=10, max_col=15, values_only=True), 1):
+    """Detecta a linha de cabeçalho (contém NOME e TOTAL) e devolve (linha, {COLUNA: idx}).
+    max_col vai até 30: a col T "TOTAL MÊS" (índice 19) fica além do bloco DATA..SEXO."""
+    for r, row in enumerate(ws.iter_rows(min_row=1, max_row=10, max_col=30, values_only=True), 1):
         idx = {str(v).strip().upper(): i for i, v in enumerate(row) if isinstance(v, str) and v.strip()}
         if "NOME" in idx and "TOTAL" in idx:
             return r, idx
@@ -92,7 +97,8 @@ def _folha_header(ws):
 
 
 def parse_folha(wb, path):
-    """Lê as 12 abas 'Folha <Mês>' -> [(mes, nome, departamento, cargo, tipo, salario, extra, total)]."""
+    """Lê as 12 abas 'Folha <Mês>' -> dicts com mes, nome, departamento, cargo, tipo,
+    salario, extra, total (col H, bruto) e total_mes (col T, custo total empresa)."""
     year = _year_from_filename(path)
     sheets = {nm.strip().lower(): nm for nm in wb.sheetnames}
     out = []
@@ -120,6 +126,13 @@ def parse_folha(wb, path):
             if total is None or nome.strip().upper().startswith("TOTAL"):
                 continue
             cargo, tipo = g(row, "CARGO"), g(row, "TIPO")
+            # col T "TOTAL MÊS" = CUSTO TOTAL p/ a empresa (bruto+VT+VR+FGTS+INSS);
+            # aceita grafia com/sem acento; fallback = total (bruto) se a coluna faltar.
+            total_mes = _num(g(row, "TOTAL MÊS"))
+            if total_mes is None:
+                total_mes = _num(g(row, "TOTAL MES"))
+            if total_mes is None:
+                total_mes = total
             out.append({
                 "year": year, "month": mnum,
                 "nome": nome.strip()[:160], "departamento": dep.strip()[:120],
@@ -128,6 +141,7 @@ def parse_folha(wb, path):
                 "salario": _num(g(row, "SALARIO")) or 0.0,
                 "extra": _num(g(row, "EXTRA")) or 0.0,
                 "total": total,
+                "total_mes": total_mes,
             })
     return out
 
@@ -194,14 +208,16 @@ def upsert_folha(cur, empresa, rows, ec, pc):
         k = (emp_id, pid, r["nome"], r["departamento"], r["cargo"])
         if k in agg:                                    # mesma pessoa 2x na aba -> soma
             a = agg[k]
-            agg[k] = (a[0], r["tipo"], a[2] + r["salario"], a[3] + r["extra"], a[4] + r["total"])
+            agg[k] = (a[0], r["tipo"], a[2] + r["salario"], a[3] + r["extra"],
+                      a[4] + r["total"], a[5] + r["total_mes"])
         else:
-            agg[k] = (k, r["tipo"], r["salario"], r["extra"], r["total"])
-    valores = [(k[0], k[1], k[2], k[3], k[4], v[1], round(v[2], 2), round(v[3], 2), round(v[4], 2))
+            agg[k] = (k, r["tipo"], r["salario"], r["extra"], r["total"], r["total_mes"])
+    valores = [(k[0], k[1], k[2], k[3], k[4], v[1], round(v[2], 2), round(v[3], 2),
+                round(v[4], 2), round(v[5], 2))
                for k, v in agg.items()]
     execute_values(cur, """
         INSERT INTO fato_folha_mensal (empresa_id, periodo_id, nome, departamento, cargo,
-                                       tipo, salario, extra, total) VALUES %s
+                                       tipo, salario, extra, total, total_mes) VALUES %s
     """, valores)
     return len(valores)
 

@@ -90,6 +90,27 @@ CREATE TABLE IF NOT EXISTS fato_receita_tipo_mensal (
 );
 CREATE INDEX IF NOT EXISTS ix_rec_tipo_emp_per ON fato_receita_tipo_mensal(empresa_id, periodo_id);
 
+-- Folha de pagamento mensal por colaborador (abas 'Folha <Mês>').
+--   total     = SALÁRIO BRUTO recebido (col H "TOTAL" = salário+extra);
+--   total_mes = CUSTO TOTAL p/ a empresa (col T "TOTAL MÊS" = bruto+VT+VR+FGTS+INSS).
+-- LGPD: o salário exato NUNCA é exposto pela API — apenas faixa (banda).
+CREATE TABLE IF NOT EXISTS fato_folha_mensal (
+    id           SERIAL PRIMARY KEY,
+    empresa_id   INT REFERENCES dim_empresa(id),
+    periodo_id   INT REFERENCES dim_periodo(id),
+    nome         VARCHAR(160),
+    departamento VARCHAR(120),
+    cargo        VARCHAR(120),
+    tipo         VARCHAR(40),
+    salario      NUMERIC(14,2),
+    extra        NUMERIC(14,2),
+    total        NUMERIC(14,2),               -- bruto recebido (col H)
+    total_mes    NUMERIC(14,2),               -- custo total empresa (col T)
+    UNIQUE (empresa_id, periodo_id, nome, departamento, cargo)
+);
+-- Migração idempotente p/ DBs criados antes da coluna de custo total.
+ALTER TABLE fato_folha_mensal ADD COLUMN IF NOT EXISTS total_mes NUMERIC(14,2);
+
 -- ----------------------------------------------------------------------------
 -- 5.4 Controle de carga
 -- ----------------------------------------------------------------------------

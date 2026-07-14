@@ -172,6 +172,9 @@ CREATE TABLE IF NOT EXISTS fato_folha_mensal (
     total        NUMERIC(14,2),
     UNIQUE (empresa_id, periodo_id, nome, departamento, cargo)
 );
+-- total_mes = CUSTO TOTAL p/ a empresa (col T "TOTAL MÊS" = bruto+VT+VR+FGTS+INSS).
+-- Migração idempotente p/ DBs existentes (o 'total' já carregado é só o bruto, col H).
+ALTER TABLE fato_folha_mensal ADD COLUMN IF NOT EXISTS total_mes NUMERIC(14,2);
 CREATE TABLE IF NOT EXISTS fato_fee_cliente (
     id         SERIAL PRIMARY KEY,
     empresa_id INT NOT NULL REFERENCES dim_empresa(id),
@@ -1228,6 +1231,7 @@ def custo_cliente(slug: str, ano: int | None = None, user=Depends(require_sessio
     """Custo de pessoas por cliente (folha do ANO inteiro).
     Custo DEDICADO = Σ folha dos departamentos com sufixo do cliente (só REF+ tem);
     OVERHEAD = folha COMPARTILHADA rateada por receita (fee_anual + variável).
+    Base da folha = total_mes (CUSTO TOTAL empresa, col T), não o bruto (col H).
     Reconcilia: Σdedicado + Σoverhead == folha total do ano. grupo = soma das 5
     (mas só o REF+ tem times dedicados). Regra de rateio DEFAULT — confirmar c/ cliente."""
     emp = _slug_or_404(slug)               # aceita 'grupo'
@@ -1238,8 +1242,9 @@ def custo_cliente(slug: str, ano: int | None = None, user=Depends(require_sessio
         _ensure_tables(cur)
         ano = ano or _ano_default(cur)
 
-        # 1) Folha do ano por departamento → dedicado por cliente vs compartilhado
-        cur.execute(f"""SELECT f.departamento, SUM(f.total)
+        # 1) Folha do ano por departamento → dedicado por cliente vs compartilhado.
+        #    Base = total_mes (CUSTO TOTAL empresa, col T); fallback total (bruto) se NULL.
+        cur.execute(f"""SELECT f.departamento, SUM(COALESCE(f.total_mes, f.total))
             FROM fato_folha_mensal f JOIN dim_empresa e ON e.id=f.empresa_id
             JOIN dim_periodo p ON p.id=f.periodo_id
             WHERE p.ano=%s{ef} GROUP BY f.departamento""", [ano] + ep)
@@ -1337,37 +1342,46 @@ def folha(slug: str, ano: int | None = None, mes: int | None = None,
         ano = ano or _ano_default(cur)
         mes = mes or _folha_periodo_default(cur, ano)
 
-        cur.execute(f"""SELECT f.departamento, f.cargo, f.salario, f.total
+        cur.execute(f"""SELECT f.departamento, f.cargo, f.salario, f.total,
+                               COALESCE(f.total_mes, f.total), f.nome, f.tipo
             FROM fato_folha_mensal f JOIN dim_empresa e ON e.id=f.empresa_id
             JOIN dim_periodo p ON p.id=f.periodo_id
             WHERE p.ano=%s AND p.mes=%s{ef}
-            ORDER BY f.departamento, f.total DESC NULLS LAST""", [ano, mes] + ep)
+            ORDER BY f.departamento, f.total_mes DESC NULLS LAST""", [ano, mes] + ep)
         rows = cur.fetchall()
-        total = round(sum(float(t or 0) for _, _, _, t in rows), 2)
+        # total = bruto (col H); total_custo = CUSTO TOTAL empresa (col T = total_mes)
+        total = round(sum(float(t or 0) for _, _, _, t, _tm, _n, _tp in rows), 2)
+        total_custo = round(sum(float(tm or 0) for _, _, _, _t, tm, _n, _tp in rows), 2)
         headcount = len(rows)
         custo_medio = round(total / headcount, 2) if headcount else None
+        custo_medio_custo = round(total_custo / headcount, 2) if headcount else None
 
         deps = {}
-        for dep, cargo, sal, tot in rows:
+        for dep, cargo, sal, tot, tot_mes, nome, tipo in rows:
             d = deps.setdefault(dep or "—", {"nome": dep or "—", "total": 0.0,
-                                             "headcount": 0, "colaboradores": []})
+                                             "total_custo": 0.0, "headcount": 0,
+                                             "colaboradores": []})
             d["total"] += float(tot or 0)
+            d["total_custo"] += float(tot_mes or 0)
             d["headcount"] += 1
-            # LGPD: banda calculada sobre o salário-base (fallback: total)
-            d["colaboradores"].append({"cargo": cargo,
+            # LGPD: banda calculada sobre o salário-base (fallback: total). Nunca o valor exato.
+            d["colaboradores"].append({"nome": nome, "cargo": cargo, "tipo": tipo,
                                        "faixa_salarial": _faixa_salarial(sal if sal is not None else tot)})
-        departamentos = sorted(({**d, "total": round(d["total"], 2)} for d in deps.values()),
-                               key=lambda d: -d["total"])
+        departamentos = sorted(({**d, "total": round(d["total"], 2),
+                                 "total_custo": round(d["total_custo"], 2)} for d in deps.values()),
+                               key=lambda d: -d["total_custo"])
 
-        out = {"ano": ano, "mes": mes, "total": total, "headcount": headcount,
-               "custo_medio": custo_medio, "departamentos": departamentos}
+        out = {"ano": ano, "mes": mes, "total": total, "total_custo": total_custo,
+               "headcount": headcount, "custo_medio": custo_medio,
+               "custo_medio_custo": custo_medio_custo, "departamentos": departamentos}
 
         if is_grupo:   # por_empresa só no consolidado (contrato)
-            cur.execute("""SELECT e.codigo, COALESCE(SUM(f.total),0), COUNT(*)
+            cur.execute("""SELECT e.codigo, COALESCE(SUM(f.total),0),
+                                  COALESCE(SUM(COALESCE(f.total_mes, f.total)),0), COUNT(*)
                 FROM fato_folha_mensal f JOIN dim_empresa e ON e.id=f.empresa_id
                 JOIN dim_periodo p ON p.id=f.periodo_id
                 WHERE p.ano=%s AND p.mes=%s GROUP BY e.codigo""", [ano, mes])
-            folha_emp = {c: (float(t), int(h)) for c, t, h in cur.fetchall()}
+            folha_emp = {c: (float(t), int(h), float(tc)) for c, t, tc, h in cur.fetchall()}
             cur.execute("""SELECT e.codigo, SUM(f.valor)
                 FROM fato_dre_mensal f JOIN dim_conta c ON c.id=f.conta_id
                 JOIN dim_empresa e ON e.id=f.empresa_id JOIN dim_periodo p ON p.id=f.periodo_id
@@ -1375,10 +1389,11 @@ def folha(slug: str, ano: int | None = None, mes: int | None = None,
             rec_emp = {c: float(v or 0) for c, v in cur.fetchall()}
             out["por_empresa"] = [
                 {"slug": e["slug"], "label": e["label"], "color": e["color"],
-                 "total": _money(folha_emp.get(e["code"], (0, 0))[0]),
-                 "headcount": folha_emp.get(e["code"], (0, 0))[1],
+                 "total": _money(folha_emp.get(e["code"], (0, 0, 0))[0]),
+                 "total_custo": _money(folha_emp.get(e["code"], (0, 0, 0))[2]),
+                 "headcount": folha_emp.get(e["code"], (0, 0, 0))[1],
                  "receita_mes": _money(rec_emp.get(e["code"])),
-                 "ratio_folha_receita": _pct(folha_emp.get(e["code"], (0, 0))[0],
+                 "ratio_folha_receita": _pct(folha_emp.get(e["code"], (0, 0, 0))[0],
                                              rec_emp.get(e["code"]))}
                 for e in EMPRESAS]
         return out
@@ -1399,15 +1414,17 @@ def headcount(slug: str, ano: int | None = None, user=Depends(require_session)):
         ano = ano or _ano_default(cur)
         mes = _folha_periodo_default(cur, ano)
 
-        # departamentos do mês default — headcount (COUNT) + total (folha)
-        cur.execute(f"""SELECT f.departamento, COUNT(*), COALESCE(SUM(f.total),0)
+        # departamentos do mês default — headcount (COUNT) + total (bruto) + total_custo (col T)
+        cur.execute(f"""SELECT f.departamento, COUNT(*), COALESCE(SUM(f.total),0),
+                               COALESCE(SUM(COALESCE(f.total_mes, f.total)),0)
             FROM fato_folha_mensal f JOIN dim_empresa e ON e.id=f.empresa_id
             JOIN dim_periodo p ON p.id=f.periodo_id
             WHERE p.ano=%s AND p.mes=%s{ef}
             GROUP BY f.departamento""", [ano, mes] + ep)
         departamentos = sorted(
-            [{"nome": dep or "—", "headcount": int(h), "total": _money(t)}
-             for dep, h, t in cur.fetchall()],
+            [{"nome": dep or "—", "headcount": int(h), "total": _money(t),
+              "total_custo": _money(tc)}
+             for dep, h, t, tc in cur.fetchall()],
             key=lambda d: -d["headcount"])
 
         # tendência mensal do headcount TOTAL (COUNT por mês; grupo soma as 5)

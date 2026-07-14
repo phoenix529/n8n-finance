@@ -11,6 +11,26 @@
   var charts = [];
   var mesSel = null;      // mês selecionado (default = mais recente com folha, vindo da API)
   var empresaSelC = null; // empresa selecionada (só p/ escopo parcial — RBAC)
+  var baseCusto = 'custo'; // 'custo' = custo total p/ a empresa | 'bruto' = salário recebido
+
+  // rótulo curto da base ativa
+  function labelBase() { return baseCusto === 'custo' ? 'Custo total (empresa)' : 'Salário bruto'; }
+  // total da folha/depto/empresa segundo a base ativa (fallback → bruto se custo ausente)
+  function vTotal(o) {
+    if (!o) return 0;
+    if (baseCusto === 'custo') return o.total_custo != null ? n(o.total_custo) : n(o.total);
+    return n(o.total);
+  }
+  // custo médio/funcionário de uma folha segundo a base ativa
+  function vMedioFolha(f) {
+    if (!f) return 0;
+    var hc = n(f.headcount);
+    if (baseCusto === 'custo') {
+      if (f.custo_medio_custo != null) return n(f.custo_medio_custo);
+      return hc ? vTotal(f) / hc : 0;
+    }
+    return f.custo_medio != null ? n(f.custo_medio) : (hc ? vTotal(f) / hc : 0);
+  }
 
   var MESES = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
 
@@ -129,12 +149,13 @@
   // bloco de KPIs + colaboradores de um departamento (usado nos drawers L1 e L2)
   function htmlDept(empresa, dept, folhaEmpresa, semExtras) {
     var hc = n(dept.headcount);
-    var medio = hc ? n(dept.total) / hc : 0;
+    var totDept = vTotal(dept);
+    var medio = hc ? totDept / hc : 0;
     var h =
       '<div class="kpi-row" style="grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px;">' +
         '<div class="kpi-card accent" style="padding:12px;">' +
-          '<div class="kpi-label">Total c/ encargos</div>' +
-          '<div class="kpi-value" style="font-size:17px;">' + fmtMoeda(dept.total) + '</div>' +
+          '<div class="kpi-label">' + esc(labelBase()) + '</div>' +
+          '<div class="kpi-value" style="font-size:17px;">' + fmtMoeda(totDept) + '</div>' +
         '</div>' +
         '<div class="kpi-card blue" style="padding:12px;">' +
           '<div class="kpi-label">Headcount</div>' +
@@ -149,12 +170,17 @@
     var colabs = dept.colaboradores || [];
     h += '<div class="card-title" style="margin-bottom:8px;">Colaboradores (' + colabs.length + ')</div>';
     if (!colabs.length) {
-      h += '<p style="font-size:12px;color:var(--text-3);">Sem colaboradores listados para o período.</p>';
+      h += '<p style="font-size:12px;color:var(--text-3);">Sem colaboradores listados para este departamento no período.</p>';
     } else {
+      // resumo: nome · cargo · tipo (CLT/PJ) · faixa salarial (banda) — LGPD: nunca salário exato
       colabs.forEach(function (c) {
-        h += '<div style="display:flex;justify-content:space-between;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);">' +
-          '<span style="font-size:12px;color:var(--text-2);">' + esc(c.cargo || '—') + '</span>' +
-          '<span style="font-family:\'JetBrains Mono\',monospace;font-size:11px;color:var(--text-1);white-space:nowrap;">' + esc(c.faixa_salarial || '—') + '</span>' +
+        h += '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);">' +
+          '<div style="min-width:0;flex:1;">' +
+            '<div style="font-size:12px;color:var(--text-1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(c.nome || '—') + '</div>' +
+            '<div style="font-size:11px;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(c.cargo || '—') + '</div>' +
+          '</div>' +
+          '<span class="chip" style="font-size:9px;padding:1px 6px;flex-shrink:0;">' + esc(c.tipo || '—') + '</span>' +
+          '<span style="font-family:\'JetBrains Mono\',monospace;font-size:11px;color:var(--text-1);white-space:nowrap;flex-shrink:0;">' + esc(c.faixa_salarial || '—') + '</span>' +
         '</div>';
       });
       h += '<p style="font-size:10px;color:var(--text-3);margin-top:8px;">Faixas salariais em bandas (LGPD) — salários exatos não são exibidos.</p>';
@@ -165,17 +191,17 @@
       var outros = (folhaEmpresa.departamentos || []).filter(function (d) { return d.nome !== dept.nome; });
       if (outros.length) {
         var maxD = 1;
-        outros.forEach(function (d) { maxD = Math.max(maxD, Math.abs(n(d.total))); });
+        outros.forEach(function (d) { maxD = Math.max(maxD, Math.abs(vTotal(d))); });
         h += '<div class="card-title" style="margin:18px 0 8px;">Outros departamentos — ' + esc(empresa.label || '') + '</div>' +
           '<p style="font-size:10px;color:var(--text-3);margin-bottom:8px;">Clique numa barra para abrir o detalhe do departamento.</p>';
         outros.forEach(function (d, i) {
-          var w = Math.round(Math.abs(n(d.total)) / maxD * 100);
+          var w = Math.round(Math.abs(vTotal(d)) / maxD * 100);
           h += '<div data-ck="outro-dept" data-i="' + i + '" role="button" tabindex="0" ' +
             'aria-label="Abrir detalhe do departamento ' + esc(d.nome) + '" ' +
             'style="display:flex;align-items:center;gap:8px;padding:6px 0;cursor:pointer;">' +
             '<span style="font-size:11px;color:var(--text-2);width:110px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(d.nome) + '</span>' +
             '<div class="mini-bar-wrap" style="flex:1;width:auto;"><div class="mini-bar-fill" style="width:' + w + '%;background:' + esc(empresa.color || '#D9DA00') + '"></div></div>' +
-            '<span style="font-family:\'JetBrains Mono\',monospace;font-size:10px;color:var(--text-1);white-space:nowrap;">' + fmtMoeda(d.total) + ' · ' + n(d.headcount) + 'p</span>' +
+            '<span style="font-family:\'JetBrains Mono\',monospace;font-size:10px;color:var(--text-1);white-space:nowrap;">' + fmtMoeda(vTotal(d)) + ' · ' + n(d.headcount) + 'p</span>' +
           '</div>';
         });
       }
@@ -225,7 +251,7 @@
                 data: {
                   labels: itens.map(function (e) { return e.label; }),
                   datasets: [{
-                    label: 'Custo médio/func.',
+                    label: 'Custo médio/func. — ' + labelBase(),
                     data: itens.map(function (e) { return e.custo_medio; }),
                     backgroundColor: itens.map(function (e) { return e.color || '#D9DA00'; }),
                     borderRadius: 4,
@@ -267,15 +293,16 @@
     var porEmp = grupo.por_empresa || [];
     var recTotal = 0;
     porEmp.forEach(function (e) { recTotal += n(e.receita_mes); });
-    var ratioGrupo = recTotal ? n(grupo.total) / recTotal * 100 : 0;
+    var totGrupo = vTotal(grupo);
+    var ratioGrupo = recTotal ? totGrupo / recTotal * 100 : 0;
     var acima20 = ratioGrupo > 20;
-    var estouradas = porEmp.filter(function (e) { return n(e.total) > n(e.receita_mes); });
+    var estouradas = porEmp.filter(function (e) { return vTotal(e) > n(e.receita_mes); });
 
     row.innerHTML =
       '<div class="kpi-card accent">' +
         '<div class="kpi-icon accent" aria-hidden="true">💰</div>' +
-        '<div class="kpi-label">Total Folha Grupo</div>' +
-        '<div class="kpi-value">' + fmtMoeda(grupo.total) + '</div>' +
+        '<div class="kpi-label">Total Folha Grupo — ' + esc(labelBase()) + '</div>' +
+        '<div class="kpi-value">' + fmtMoeda(totGrupo) + '</div>' +
         '<div class="kpi-compare">' + MESES[(n(grupo.mes) - 1 + 12) % 12] + '/' + esc(grupo.ano) + ' · por mês</div>' +
       '</div>' +
       '<div class="kpi-card blue">' +
@@ -286,8 +313,8 @@
       '</div>' +
       '<div class="kpi-card green">' +
         '<div class="kpi-icon green" aria-hidden="true">⚖️</div>' +
-        '<div class="kpi-label">Custo médio/func.</div>' +
-        '<div class="kpi-value">' + fmtMoeda(grupo.custo_medio) + '</div>' +
+        '<div class="kpi-label">Custo médio/func. — ' + esc(labelBase()) + '</div>' +
+        '<div class="kpi-value">' + fmtMoeda(vMedioFolha(grupo)) + '</div>' +
         '<div class="kpi-compare">folha ÷ headcount no mês</div>' +
       '</div>' +
       '<div class="kpi-card ' + (acima20 ? 'red' : 'green') + '">' +
@@ -316,12 +343,12 @@
       return;
     }
     var hc = n(folha.headcount);
-    var medio = folha.custo_medio != null ? n(folha.custo_medio) : (hc ? n(folha.total) / hc : 0);
+    var medio = vMedioFolha(folha);
     row.innerHTML =
       '<div class="kpi-card accent">' +
         '<div class="kpi-icon accent" aria-hidden="true">💰</div>' +
-        '<div class="kpi-label">Total Folha — ' + esc((empresa && empresa.label) || '') + '</div>' +
-        '<div class="kpi-value">' + fmtMoeda(folha.total) + '</div>' +
+        '<div class="kpi-label">Total Folha — ' + esc((empresa && empresa.label) || '') + ' · ' + esc(labelBase()) + '</div>' +
+        '<div class="kpi-value">' + fmtMoeda(vTotal(folha)) + '</div>' +
         '<div class="kpi-compare">' + MESES[(n(folha.mes) - 1 + 12) % 12] + '/' + esc(folha.ano) + ' · por mês</div>' +
       '</div>' +
       '<div class="kpi-card blue">' +
@@ -332,7 +359,7 @@
       '</div>' +
       '<div class="kpi-card green">' +
         '<div class="kpi-icon green" aria-hidden="true">⚖️</div>' +
-        '<div class="kpi-label">Custo médio/func.</div>' +
+        '<div class="kpi-label">Custo médio/func. — ' + esc(labelBase()) + '</div>' +
         '<div class="kpi-value">' + fmtMoeda(medio) + '</div>' +
         '<div class="kpi-compare">folha ÷ headcount no mês</div>' +
       '</div>';
@@ -342,26 +369,26 @@
   function pintaTreemap(el, folhas, comparativo) {
     var box = el.querySelector('[data-ck="treemap"]');
     if (!box) return;
-    var itens = folhas.filter(function (f) { return f && f.folha && n(f.folha.total) > 0; });
+    var itens = folhas.filter(function (f) { return f && f.folha && vTotal(f.folha) > 0; });
     if (!itens.length) {
       box.innerHTML = '<p class="empty-state">Sem folha carregada para o mês selecionado.</p>';
       return;
     }
-    itens.sort(function (a, b) { return n(b.folha.total) - n(a.folha.total); });
+    itens.sort(function (a, b) { return vTotal(b.folha) - vTotal(a.folha); });
 
     box.innerHTML = '<div class="treemap" role="group" ' +
-      'aria-label="Treemap da folha: largura de cada bloco proporcional ao total da empresa; blocos internos são os departamentos. Clique num departamento para abrir o detalhe.">' +
+      'aria-label="Treemap da folha (' + esc(labelBase()) + '): largura de cada bloco proporcional ao total da empresa; blocos internos são os departamentos. Clique num departamento para abrir o detalhe.">' +
       itens.map(function (f, ei) {
         var cor = f.empresa.color || '#D9DA00';
-        var depts = (f.folha.departamentos || []).slice().sort(function (a, b) { return n(b.total) - n(a.total); });
+        var depts = (f.folha.departamentos || []).slice().sort(function (a, b) { return vTotal(b) - vTotal(a); });
         return '<div class="treemap-block" data-ck="tm-emp" data-e="' + ei + '" ' +
-          'style="flex:' + Math.max(n(f.folha.total), 1) + ' 1 0;border-color:' + hexA(cor, 0.5) + ';background:' + hexA(cor, 0.08) + ';">' +
+          'style="flex:' + Math.max(vTotal(f.folha), 1) + ' 1 0;border-color:' + hexA(cor, 0.5) + ';background:' + hexA(cor, 0.08) + ';">' +
           '<div class="treemap-block-title" style="color:' + esc(cor) + ';">' + esc(f.empresa.label) + '</div>' +
-          '<div class="treemap-block-val">' + fmtMoeda(f.folha.total) + ' · ' + n(f.folha.headcount) + 'p</div>' +
+          '<div class="treemap-block-val">' + fmtMoeda(vTotal(f.folha)) + ' · ' + n(f.folha.headcount) + 'p</div>' +
           depts.map(function (d, di) {
             return '<div class="treemap-dept" data-ck="tm-dept" data-e="' + ei + '" data-d="' + di + '" ' +
-              'role="button" tabindex="0" aria-label="Departamento ' + esc(d.nome) + ' de ' + esc(f.empresa.label) + ': ' + fmtMoeda(d.total) + '" ' +
-              'style="flex:' + Math.max(n(d.total), 1) + ' 1 0;background:' + hexA(cor, 0.35) + ';cursor:pointer;">' +
+              'role="button" tabindex="0" aria-label="Departamento ' + esc(d.nome) + ' de ' + esc(f.empresa.label) + ': ' + fmtMoeda(vTotal(d)) + '" ' +
+              'style="flex:' + Math.max(vTotal(d), 1) + ' 1 0;background:' + hexA(cor, 0.35) + ';cursor:pointer;">' +
               esc(d.nome) + '</div>';
           }).join('') +
         '</div>';
@@ -373,7 +400,7 @@
         e.stopPropagation();
         var f = itens[Number(cel.getAttribute('data-e'))];
         if (!f) return;
-        var depts = (f.folha.departamentos || []).slice().sort(function (a, b) { return n(b.total) - n(a.total); });
+        var depts = (f.folha.departamentos || []).slice().sort(function (a, b) { return vTotal(b) - vTotal(a); });
         var d = depts[Number(cel.getAttribute('data-d'))];
         if (d) abreDrawerDept(f.empresa, d, f.folha, comparativo);
       }
@@ -398,22 +425,22 @@
       chip.style.color = cor;
       chip.style.border = '1px solid ' + hexA(cor, 0.35);
     }
-    var depts = maior.folha.departamentos.slice().sort(function (a, b) { return n(b.total) - n(a.total); }).slice(0, 8);
+    var depts = maior.folha.departamentos.slice().sort(function (a, b) { return vTotal(b) - vTotal(a); }).slice(0, 8);
     var maxD = 1, maxHc = 1;
     depts.forEach(function (d) {
-      maxD = Math.max(maxD, Math.abs(n(d.total)));
+      maxD = Math.max(maxD, Math.abs(vTotal(d)));
       maxHc = Math.max(maxHc, n(d.headcount));
     });
 
     box.innerHTML = depts.map(function (d, i) {
-      var w = Math.round(Math.abs(n(d.total)) / maxD * 100);
+      var w = Math.round(Math.abs(vTotal(d)) / maxD * 100);
       var diam = Math.round(18 + n(d.headcount) / maxHc * 14); // bolha ∝ headcount
       return '<div data-ck="dept-row" data-i="' + i + '" role="button" tabindex="0" ' +
-        'aria-label="Departamento ' + esc(d.nome) + ': ' + fmtMoeda(d.total) + ' e ' + n(d.headcount) + ' pessoas. Clique para detalhe." ' +
+        'aria-label="Departamento ' + esc(d.nome) + ': ' + fmtMoeda(vTotal(d)) + ' e ' + n(d.headcount) + ' pessoas. Clique para detalhe." ' +
         'style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer;">' +
         '<span style="font-size:12px;color:var(--text-2);width:118px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(d.nome) + '</span>' +
         '<div class="mini-bar-wrap" style="flex:1;width:auto;height:8px;"><div class="mini-bar-fill" style="width:' + w + '%;background:' + esc(cor) + '"></div></div>' +
-        '<span style="font-family:\'JetBrains Mono\',monospace;font-size:11px;color:var(--text-1);white-space:nowrap;">' + fmtMoeda(d.total) + '</span>' +
+        '<span style="font-family:\'JetBrains Mono\',monospace;font-size:11px;color:var(--text-1);white-space:nowrap;">' + fmtMoeda(vTotal(d)) + '</span>' +
         '<span aria-hidden="true" style="width:' + diam + 'px;height:' + diam + 'px;border-radius:50%;background:' + hexA(cor, 0.3) + ';' +
           'display:inline-flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;color:' + esc(cor) + ';flex-shrink:0;">' +
           n(d.headcount) + '</span>' +
@@ -467,10 +494,9 @@
     box.innerHTML = '<canvas data-ck="ratio-canvas" role="img"></canvas>';
     var canvas = box.querySelector('[data-ck="ratio-canvas"]');
     var vals = porEmp.map(function (e) {
-      // usa ratio da API quando presente; senão calcula folha/receita do mês
-      var r = e.ratio_folha_receita != null ? ratioPct(e.ratio_folha_receita)
-        : (n(e.receita_mes) ? n(e.total) / n(e.receita_mes) * 100 : 0);
-      return r;
+      // segue a base ativa (custo total × bruto), igual ao KPI e ao treemap:
+      // ratio = folha(base) / receita do mês. Em 'bruto' vTotal(e)===e.total.
+      return n(e.receita_mes) ? vTotal(e) / n(e.receita_mes) * 100 : 0;
     });
     canvas.setAttribute('aria-label',
       'Barras do percentual folha sobre receita bruta de cada empresa no mês, com linha de referência tracejada em 20%.');
@@ -497,7 +523,7 @@
               label: function (c) {
                 var e = porEmp[c.dataIndex];
                 return [' Folha/Receita: ' + fmtPct(c.parsed.y),
-                  ' Folha: ' + fmtMoeda(e.total) + ' · Receita mês: ' + fmtMoeda(e.receita_mes)];
+                  ' ' + labelBase() + ': ' + fmtMoeda(vTotal(e)) + ' · Receita mês: ' + fmtMoeda(e.receita_mes)];
               }
             }
           })
@@ -555,8 +581,8 @@
             '<span style="font-size:12px;color:var(--text-2);width:118px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(d.nome) + '</span>' +
             '<div class="mini-bar-wrap" style="flex:1;width:auto;height:8px;"><div class="mini-bar-fill" style="width:' + w + '%;background:#D9DA00"></div></div>' +
             '<span style="font-family:\'JetBrains Mono\',monospace;font-size:12px;font-weight:700;color:var(--text-1);white-space:nowrap;min-width:26px;text-align:right;">' + n(d.headcount) + '</span>' +
-            (d.total != null
-              ? '<span style="font-family:\'JetBrains Mono\',monospace;font-size:10px;color:var(--text-3);white-space:nowrap;">' + fmtMoeda(d.total) + '</span>'
+            ((d.total != null || d.total_custo != null)
+              ? '<span style="font-family:\'JetBrains Mono\',monospace;font-size:10px;color:var(--text-3);white-space:nowrap;">' + fmtMoeda(vTotal(d)) + '</span>'
               : '') +
           '</div>';
         }).join('');
@@ -745,8 +771,15 @@
       }
 
       el.innerHTML =
-        // filtros: empresa (só escopo parcial com >1 permitida) + mês da folha
-        '<div style="display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-bottom:16px;flex-wrap:wrap;">' +
+        // filtros: base de custo (toggle) + empresa (só escopo parcial com >1 permitida) + mês da folha
+        '<div style="display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-bottom:6px;flex-wrap:wrap;">' +
+          '<span class="filter-label">Base de custo</span>' +
+          '<div role="group" aria-label="Base de custo da folha" style="display:inline-flex;gap:4px;margin-right:auto;">' +
+            '<button type="button" data-ck="base-custo" aria-pressed="true" ' +
+              'style="padding:5px 12px;border-radius:999px;font-size:12px;cursor:pointer;">Custo total (empresa)</button>' +
+            '<button type="button" data-ck="base-bruto" aria-pressed="false" ' +
+              'style="padding:5px 12px;border-radius:999px;font-size:12px;cursor:pointer;">Salário bruto (recebido)</button>' +
+          '</div>' +
           (total || permitidas.length > 1
             ? '<span class="filter-label">Empresa</span>' +
               '<select data-ck="emp-select" aria-label="Filtro de empresa da folha"></select>'
@@ -754,6 +787,9 @@
           '<span class="filter-label">Mês da folha</span>' +
           '<select data-ck="mes-select" aria-label="Filtro de mês da folha"><option value="">Carregando…</option></select>' +
         '</div>' +
+        '<p style="font-size:11px;color:var(--text-3);margin:0 0 16px;text-align:right;">' +
+          'Custo total = salário + extras + VT + VR + FGTS + INSS; bruto = o que o colaborador recebe.' +
+        '</p>' +
 
         '<div class="kpi-row cols-5" data-ck="kpis">' +
           '<div class="kpi-card"><div class="kpi-label">Carregando…</div></div>' +
@@ -845,6 +881,30 @@
         });
       }
 
+      // toggle "Base de custo": custo total (empresa) × salário bruto (recebido)
+      var btnCusto = el.querySelector('[data-ck="base-custo"]');
+      var btnBruto = el.querySelector('[data-ck="base-bruto"]');
+      function pintaToggleBase() {
+        [[btnCusto, 'custo'], [btnBruto, 'bruto']].forEach(function (par) {
+          var b = par[0]; if (!b) return;
+          var on = baseCusto === par[1];
+          b.setAttribute('aria-pressed', on ? 'true' : 'false');
+          b.style.border = '1px solid ' + (on ? '#D9DA00' : 'var(--border)');
+          b.style.background = on ? '#D9DA00' : 'transparent';
+          b.style.color = on ? '#1C1C1C' : 'var(--text-2)';
+          b.style.fontWeight = on ? '600' : '400';
+        });
+      }
+      function trocaBase(nova) {
+        if (baseCusto === nova) return;
+        baseCusto = nova;
+        pintaToggleBase();
+        carrega(); // re-renderiza usando total_custo × total (dados já em cache do backend)
+      }
+      if (btnCusto) btnCusto.addEventListener('click', function () { trocaBase('custo'); });
+      if (btnBruto) btnBruto.addEventListener('click', function () { trocaBase('bruto'); });
+      pintaToggleBase();
+
       function preencheSelect(mesAtivo) {
         sel.innerHTML = MESES.map(function (m, i) {
           return '<option value="' + (i + 1) + '"' + ((i + 1) === n(mesAtivo) ? ' selected' : '') + '>' + m + '</option>';
@@ -906,19 +966,18 @@
             // custo médio/funcionário por empresa (usado no botão "Comparar")
             var comparativo = folhas.map(function (f) {
               if (!f.folha) return null;
-              var hc = n(f.folha.headcount);
               return {
                 slug: f.empresa.slug,
                 label: f.empresa.label,
                 color: f.empresa.color,
-                headcount: hc,
-                custo_medio: f.folha.custo_medio != null ? n(f.folha.custo_medio) : (hc ? n(f.folha.total) / hc : 0)
+                headcount: n(f.folha.headcount),
+                custo_medio: vMedioFolha(f.folha) // segue a base ativa
               };
             }).filter(Boolean);
 
             pintaTreemap(el, folhas, comparativo);
-            var comFolha = folhas.filter(function (f) { return f.folha && n(f.folha.total) > 0; });
-            comFolha.sort(function (a, b) { return n(b.folha.total) - n(a.folha.total); });
+            var comFolha = folhas.filter(function (f) { return f.folha && vTotal(f.folha) > 0; });
+            comFolha.sort(function (a, b) { return vTotal(b.folha) - vTotal(a.folha); });
             var destaque = comFolha[0];
             if (!mostrarGrupo) {
               // uma empresa selecionada: painel de departamentos segue a EMPRESA SELECIONADA
