@@ -725,10 +725,15 @@
     render: function (el) {
       destroiCharts();
 
-      // RBAC: escopo parcial usa /api/folha/<slug> (grupo = 403) e esconde widgets grupo-only
+      // Seletor de empresa: escopo TOTAL escolhe "Todas (Grupo)" (empresaSelC='grupo')
+      // ou uma empresa específica; escopo parcial escolhe entre as suas empresas
+      // (grupo=403). 'grupo' = visão consolidada; um slug = só aquela empresa.
       var total = escopoTotal();
       var permitidas = listaEmpresas();
-      if (!total) {
+      if (total) {
+        if (empresaSelC == null) empresaSelC = 'grupo';
+        if (empresaSelC !== 'grupo' && !permitidas.some(function (e) { return e.slug === empresaSelC; })) empresaSelC = 'grupo';
+      } else {
         var aindaVale = permitidas.some(function (e) { return e.slug === empresaSelC; });
         empresaSelC = aindaVale ? empresaSelC : ((permitidas[0] || {}).slug || null);
       }
@@ -742,7 +747,7 @@
       el.innerHTML =
         // filtros: empresa (só escopo parcial com >1 permitida) + mês da folha
         '<div style="display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-bottom:16px;flex-wrap:wrap;">' +
-          (!total && permitidas.length > 1
+          (total || permitidas.length > 1
             ? '<span class="filter-label">Empresa</span>' +
               '<select data-ck="emp-select" aria-label="Filtro de empresa da folha"></select>'
             : '') +
@@ -826,10 +831,11 @@
 
       var sel = el.querySelector('[data-ck="mes-select"]');
 
-      // seletor de empresa (escopo parcial com mais de uma permitida)
+      // seletor de empresa — "Todas (Grupo)" (escopo total) + empresas permitidas
       var selEmp = el.querySelector('[data-ck="emp-select"]');
       if (selEmp) {
-        selEmp.innerHTML = permitidas.map(function (e) {
+        var optsEmp = (total ? [{ slug: 'grupo', label: 'Todas (Grupo)' }] : []).concat(permitidas);
+        selEmp.innerHTML = optsEmp.map(function (e) {
           return '<option value="' + esc(e.slug) + '"' + (e.slug === empresaSelC ? ' selected' : '') + '>' +
             esc(e.label) + '</option>';
         }).join('');
@@ -847,19 +853,24 @@
 
       function carrega() {
         destroiCharts();
-        // 1) folha "base": consolidado do grupo (escopo total) OU empresa selecionada
-        //    (escopo parcial — /api/folha/grupo devolveria 403). Define o mês default.
-        var pathBase = total
+        // 'grupo' = consolidado (todas); um slug = só aquela empresa (salários incluídos).
+        var mostrarGrupo = (empresaSelC === 'grupo');
+        var pathBase = mostrarGrupo
           ? '/api/folha/grupo' + qsFolha()
           : '/api/folha/' + encodeURIComponent(empresaSelC) + qsFolha();
+        // widget grupo-only (folha/receita por empresa): só aparece em "Todas (Grupo)"
+        var ratioCard = el.querySelector('[data-ck="ratio-box"]');
+        ratioCard = ratioCard ? ratioCard.closest('.chart-card') : null;
+        if (ratioCard) ratioCard.style.display = mostrarGrupo ? '' : 'none';
+
         pega(pathBase).then(function (base) {
           if (!el.isConnected) return;
           if (base && base.mes && !mesSel) {
             mesSel = n(base.mes); // mês mais recente com folha carregada
           }
           preencheSelect(mesSel || (base && base.mes));
-          var empSel = total ? null : permitidas.filter(function (e) { return e.slug === empresaSelC; })[0];
-          if (total) {
+          var empSel = mostrarGrupo ? null : permitidas.filter(function (e) { return e.slug === empresaSelC; })[0];
+          if (mostrarGrupo) {
             pintaKpis(el, base);
             pintaRatio(el, base); // widget grupo-only (usa por_empresa)
           } else {
@@ -867,11 +878,11 @@
           }
 
           // PANEL 04: headcount do escopo atual (grupo consolidado OU empresa selecionada)
-          // drill só no escopo parcial, onde 'base' traz departamentos + colaboradores
-          var slugHC = total ? 'grupo' : empresaSelC;
+          // drill (base com departamentos+colaboradores) só quando UMA empresa está selecionada
+          var slugHC = mostrarGrupo ? 'grupo' : empresaSelC;
           pega('/api/headcount/' + encodeURIComponent(slugHC) + qsAno()).then(function (hc) {
             if (!el.isConnected) return;
-            pintaHeadcount(el, hc, total ? null : base, empSel);
+            pintaHeadcount(el, hc, mostrarGrupo ? null : base, empSel);
           });
 
           // PANEL 05: custo de pessoas por cliente (ano) — grupo OU empresa selecionada
@@ -880,9 +891,11 @@
             pintaCustoCliente(el, cc);
           });
 
-          // 2) folha por empresa PERMITIDA (departamentos) — treemap, barras e drawers
-          Promise.all(permitidas.map(function (e) {
-            if (!total && e.slug === empresaSelC) {
+          // 2) folha por empresa (departamentos) — TODAS no consolidado, ou só a
+          //    empresa selecionada quando uma está escolhida (treemap/deptos filtrados)
+          var alvos = mostrarGrupo ? permitidas : permitidas.filter(function (e) { return e.slug === empresaSelC; });
+          Promise.all(alvos.map(function (e) {
+            if (!mostrarGrupo && e.slug === empresaSelC) {
               return Promise.resolve({ empresa: e, folha: base }); // reusa a chamada base
             }
             return pega('/api/folha/' + encodeURIComponent(e.slug) + qsFolha()).then(function (f) {
@@ -907,8 +920,8 @@
             var comFolha = folhas.filter(function (f) { return f.folha && n(f.folha.total) > 0; });
             comFolha.sort(function (a, b) { return n(b.folha.total) - n(a.folha.total); });
             var destaque = comFolha[0];
-            if (!total) {
-              // escopo parcial: painel de departamentos segue a EMPRESA SELECIONADA
+            if (!mostrarGrupo) {
+              // uma empresa selecionada: painel de departamentos segue a EMPRESA SELECIONADA
               var doSel = comFolha.filter(function (f) { return f.empresa.slug === empresaSelC; })[0];
               if (doSel) destaque = doSel;
             }
