@@ -46,6 +46,10 @@
   // API devolve percentuais JÁ em pontos percentuais (contrato) — sem heurística de escala
   function pctEscala(v) { return n(v); }
   function pctEscalaArray(vals) { return vals.map(n); }
+  // Distinguem "sem dado" (null/undefined) de 0 real — mostram "—" (ex.: Zup 2026,
+  // cujo resultado é #REF! na origem, vem null da API e NÃO deve virar "R$ 0").
+  function temValor(v) { return v !== null && v !== undefined && isFinite(Number(v)); }
+  function moedaND(v) { return temValor(v) ? fmtMoeda(v) : '—'; }
 
   var MESES = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
   function nomeMes(m) { m = n(m); return (m >= 1 && m <= 12) ? MESES[m - 1] : String(m); }
@@ -281,10 +285,13 @@
     if (!row || !kpis) return;
     var prev = kpis.prev || {};
     var margemLiq = n(kpis.receita_bruta) ? n(kpis.receita_liquida) / n(kpis.receita_bruta) * 100 : 0;
-    var margemAg = n(kpis.receita_bruta) ? n(kpis.resultado_agencia) / n(kpis.receita_bruta) * 100 : 0;
-    var ebit = pctEscala(kpis.ebit_pct);
+    var temRA = temValor(kpis.resultado_agencia);
+    var margemAg = (temRA && n(kpis.receita_bruta)) ? n(kpis.resultado_agencia) / n(kpis.receita_bruta) * 100 : null;
+    var temEbit = temValor(kpis.ebit_pct);
+    var ebit = temEbit ? pctEscala(kpis.ebit_pct) : null;
     var meta = kpis.meta_ebit_pct != null ? n(kpis.meta_ebit_pct) : 8;   // meta do backend (0 é válido)
-    var resLiqPos = n(kpis.resultado_liquido) >= 0;
+    var temRL = temValor(kpis.resultado_liquido);
+    var resLiqPos = temRL ? n(kpis.resultado_liquido) >= 0 : true;
     var rbColabTxt = (rbColab != null && isFinite(rbColab)) ? fmtMoeda(rbColab) : '—';
 
     row.innerHTML =
@@ -309,25 +316,27 @@
       '<div class="kpi-card accent">' +
         '<div class="kpi-icon accent" aria-hidden="true">🏢</div>' +
         '<div class="kpi-label">Res. Agência</div>' +
-        '<div class="kpi-value">' + fmtMoeda(kpis.resultado_agencia) + '</div>' +
-        '<span class="kpi-delta ' + (n(kpis.resultado_agencia) >= 0 ? 'up' : 'down') + '">' + fmtPct(margemAg) + '</span>' +
+        '<div class="kpi-value">' + moedaND(kpis.resultado_agencia) + '</div>' +
+        (temRA ? '<span class="kpi-delta ' + (n(kpis.resultado_agencia) >= 0 ? 'up' : 'down') + '">' + fmtPct(margemAg) + '</span>' : '<span class="kpi-delta">—</span>') +
         '<div class="kpi-compare">margem s/ Rec. Bruta</div>' +
       '</div>' +
       // EBIT Negócio %
-      '<div class="kpi-card ' + (ebit >= 0 ? 'blue' : 'red') + '">' +
-        '<div class="kpi-icon ' + (ebit >= 0 ? 'blue' : 'red') + '" aria-hidden="true">📈</div>' +
+      '<div class="kpi-card ' + (!temEbit ? '' : ebit >= 0 ? 'blue' : 'red') + '">' +
+        '<div class="kpi-icon ' + (!temEbit ? 'blue' : ebit >= 0 ? 'blue' : 'red') + '" aria-hidden="true">📈</div>' +
         '<div class="kpi-label">EBIT Negócio</div>' +
-        '<div class="kpi-value">' + fmtPct(ebit, 2) + '</div>' +
-        '<span class="kpi-delta ' + (ebit >= meta ? 'up' : ebit >= 0 ? 'warn' : 'down') + '">' + (ebit >= meta ? 'acima da meta' : ebit >= 0 ? ('abaixo da meta ' + fmtPct(meta, 0)) : 'negativo') + '</span>' +
+        '<div class="kpi-value">' + (temEbit ? fmtPct(ebit, 2) : '—') + '</div>' +
+        (temEbit
+          ? '<span class="kpi-delta ' + (ebit >= meta ? 'up' : ebit >= 0 ? 'warn' : 'down') + '">' + (ebit >= meta ? 'acima da meta' : ebit >= 0 ? ('abaixo da meta ' + fmtPct(meta, 0)) : 'negativo') + '</span>'
+          : '<span class="kpi-delta">dado pendente</span>') +
         '<div class="kpi-compare">EBIT / Receita Bruta</div>' +
       '</div>' +
       // Res. Líquido
-      '<div class="kpi-card ' + (resLiqPos ? 'green' : 'red') + '">' +
-        '<div class="kpi-icon ' + (resLiqPos ? 'green' : 'red') + '" aria-hidden="true">' + (resLiqPos ? '✓' : '✗') + '</div>' +
+      '<div class="kpi-card ' + (!temRL ? '' : resLiqPos ? 'green' : 'red') + '">' +
+        '<div class="kpi-icon ' + (!temRL ? 'blue' : resLiqPos ? 'green' : 'red') + '" aria-hidden="true">' + (!temRL ? '•' : resLiqPos ? '✓' : '✗') + '</div>' +
         '<div class="kpi-label">Res. Líquido</div>' +
-        '<div class="kpi-value">' + fmtMoeda(kpis.resultado_liquido) + '</div>' +
-        deltaBadge(kpis.resultado_liquido, prev.resultado_liquido) +
-        '<div class="kpi-compare">' + (prev.resultado_liquido != null ? 'vs ' + fmtMoeda(prev.resultado_liquido) + ' em ' + esc(prev.ano) : '') + '</div>' +
+        '<div class="kpi-value">' + moedaND(kpis.resultado_liquido) + '</div>' +
+        (temRL ? deltaBadge(kpis.resultado_liquido, prev.resultado_liquido) : '<span class="kpi-delta">—</span>') +
+        '<div class="kpi-compare">' + (temRL && prev.resultado_liquido != null ? 'vs ' + fmtMoeda(prev.resultado_liquido) + ' em ' + esc(prev.ano) : '') + '</div>' +
       '</div>' +
       // Painel 00 — Headcount
       '<div class="kpi-card blue" aria-label="Headcount da empresa">' +
