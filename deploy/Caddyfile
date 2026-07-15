@@ -1,4 +1,4 @@
-# Caddyfile — proxy reverso na frente do Grafana (URL do cliente).
+# Caddyfile — proxy reverso do Cockpit (URL do cliente).
 # SITE_ADDRESS vem do .env:
 #   ":80"            -> acesso por IP, HTTP simples (ex.: http://76.13.172.100)
 #   "cockpit.seu-dominio.com" -> Caddy emite TLS automático (HTTPS) via Let's Encrypt.
@@ -11,8 +11,11 @@
 		reverse_proxy ia:8500
 	}
 
-	# Padrão: Grafana (dashboard blueprint)
+	# Demais rotas (raiz "/", "/login/" do Grafana, etc.) → login/app do Cockpit.
+	# Antes caíam no Grafana, cuja tela de login confundia os clientes (dois logins).
+	# O Grafana continua rodando no stack (acesso interno); para reexpô-lo, troque
+	# este bloco de volta por `reverse_proxy grafana:3000` (ou monte-o sob /grafana).
 	handle {
-		reverse_proxy grafana:3000
+		redir /app/ 302
 	}
 }

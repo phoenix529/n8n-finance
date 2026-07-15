@@ -1,0 +1,9 @@
+# Force LF for files that run on the Linux server / are whitespace-sensitive.
+# core.autocrlf=true on Windows dev machines otherwise stores CRLF, which breaks
+# bash scripts (`cd "$DIR"\r`) and can confuse Caddy/config parsers on deploy.
+*.sh        text eol=lf
+Caddyfile   text eol=lf
+*.Caddyfile text eol=lf
+deploy/deploy.sh   text eol=lf
+deploy/bootstrap.sh text eol=lf
+deploy/Caddyfile   text eol=lf

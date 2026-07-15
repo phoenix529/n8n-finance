@@ -25,6 +25,19 @@ if [ ! -f .env ]; then
   exit 1
 fi
 
+# Validação do Caddyfile ANTES de aplicar: um Caddyfile inválido derruba o site
+# inteiro (o restart do Caddy mais abaixo não subiria). O arquivo novo já está no
+# disco (git reset) e é bind-montado no container Caddy que ainda roda a config
+# ANTIGA — então validamos ali. Se falhar, abortamos e a config anterior continua
+# servindo (zero downtime). Pulado no 1º deploy (Caddy ainda não está de pé).
+if docker compose ps caddy 2>/dev/null | grep -qiE "up|running"; then
+  echo "==> validando Caddyfile novo antes de aplicar"
+  if ! docker compose exec -T caddy caddy validate --adapter caddyfile --config /etc/caddy/Caddyfile; then
+    echo "ERRO: Caddyfile inválido — abortando deploy (config antiga preservada)." >&2
+    exit 1
+  fi
+fi
+
 echo "==> docker compose: build + up"
 docker compose pull --quiet db n8n grafana caddy || true
 docker compose up -d --build
