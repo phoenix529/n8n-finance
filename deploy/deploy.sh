@@ -60,6 +60,21 @@ docker compose exec -T ia python -c "import urllib.request,sys; \
 sys.exit(0 if 'ok' in urllib.request.urlopen('http://127.0.0.1:8500/health',timeout=8).read().decode() else 1)" \
   && echo "    IA OK" || { echo "    IA FALHOU"; docker compose logs --tail=40 ia; exit 1; }
 
+# Smoke test da ROTA PÚBLICA do Caddy: a raiz deve REDIRECIONAR p/ /app/ (o
+# `caddy validate` aceita config sintaticamente válida mas SEMANTICAMENTE errada —
+# ex.: `redir /app/ 302` sem matcher nomeado não redireciona nada). Bate direto no
+# Caddy local (--resolve p/ 127.0.0.1), driblando o Cloudflare. Não-fatal: só avisa.
+if command -v curl >/dev/null 2>&1; then
+  echo "==> smoke test rota pública (raiz -> /app/)"
+  _dom="${PUBLIC_HOST:-cockpit.refmais.com.br}"
+  _loc=$(curl -sko /dev/null -w '%{http_code} %{redirect_url}' --max-time 8 \
+    --resolve "$_dom:443:127.0.0.1" "https://$_dom/" 2>/dev/null || true)
+  case "$_loc" in
+    3*[!0-9]*"/app/"*) echo "    rota pública OK: $_loc" ;;
+    *) echo "    AVISO: raiz NÃO redireciona p/ /app/ (resposta: '$_loc') — confira o Caddyfile" ;;
+  esac
+fi
+
 # Backup diário do banco (Blueprint §8) — agenda idempotente via /etc/cron.d.
 # Dump roda dentro do container 'db'; retenção de 7 dias; falha alto (não poda em erro).
 echo "==> agendando backup diário do banco (cron 03:00, retenção 7d)"

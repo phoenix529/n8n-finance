@@ -15,7 +15,13 @@
 	# Antes caíam no Grafana, cuja tela de login confundia os clientes (dois logins).
 	# O Grafana continua rodando no stack (acesso interno); para reexpô-lo, troque
 	# este bloco de volta por `reverse_proxy grafana:3000` (ou monte-o sob /grafana).
+	#
+	# `redir /app/ 302` SOZINHO não funciona: o Caddy lê o 1º argumento iniciado
+	# por "/" como MATCHER de caminho, não como destino. Por isso o matcher nomeado
+	# @resto (todos os caminhos) — aí "/app/" é o destino. Alvo relativo (sem host)
+	# é o mais seguro atrás do Cloudflare (o navegador resolve no esquema/host atual).
+	@resto path /*
 	handle {
-		redir /app/ 302
+		redir @resto /app/ 302
 	}
 }
