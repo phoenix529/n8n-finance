@@ -771,21 +771,24 @@
       }
 
       el.innerHTML =
-        // filtros: base de custo (toggle) + empresa (só escopo parcial com >1 permitida) + mês da folha
-        '<div style="display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-bottom:6px;flex-wrap:wrap;">' +
-          '<span class="filter-label">Base de custo</span>' +
-          '<div role="group" aria-label="Base de custo da folha" style="display:inline-flex;gap:4px;margin-right:auto;">' +
+        // filtros: EMPRESA primeiro (pedido nº1 do cliente — precisa ser óbvio),
+        // depois mês; toggle de base de custo à direita.
+        '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap;">' +
+          (total || permitidas.length > 1
+            ? '<span class="filter-label" style="font-weight:600;">Empresa</span>' +
+              '<select data-ck="emp-select" aria-label="Filtro de empresa da folha" ' +
+                'style="padding:6px 10px;border:1.5px solid #D9DA00;border-radius:8px;' +
+                'font-size:13px;font-weight:600;background:#FFFDF0;cursor:pointer;"></select>'
+            : '') +
+          '<span class="filter-label">Mês da folha</span>' +
+          '<select data-ck="mes-select" aria-label="Filtro de mês da folha"><option value="">Carregando…</option></select>' +
+          '<span class="filter-label" style="margin-left:auto;">Base de custo</span>' +
+          '<div role="group" aria-label="Base de custo da folha" style="display:inline-flex;gap:4px;">' +
             '<button type="button" data-ck="base-custo" aria-pressed="true" ' +
               'style="padding:5px 12px;border-radius:999px;font-size:12px;cursor:pointer;">Custo total (empresa)</button>' +
             '<button type="button" data-ck="base-bruto" aria-pressed="false" ' +
               'style="padding:5px 12px;border-radius:999px;font-size:12px;cursor:pointer;">Salário bruto (recebido)</button>' +
           '</div>' +
-          (total || permitidas.length > 1
-            ? '<span class="filter-label">Empresa</span>' +
-              '<select data-ck="emp-select" aria-label="Filtro de empresa da folha"></select>'
-            : '') +
-          '<span class="filter-label">Mês da folha</span>' +
-          '<select data-ck="mes-select" aria-label="Filtro de mês da folha"><option value="">Carregando…</option></select>' +
         '</div>' +
         '<p style="font-size:11px;color:var(--text-3);margin:0 0 16px;text-align:right;">' +
           'Custo total = salário + extras + VT + VR + FGTS + INSS; bruto = o que o colaborador recebe.' +

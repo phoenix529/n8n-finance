@@ -515,6 +515,10 @@ select:focus { border-color: var(--border-acc); }
   transition: filter 0.15s;
 }
 .treemap-block:hover { filter: brightness(1.25); }
+/* affordance de clique: deptos do treemap e linhas de ranking abrem o detalhe
+   das pessoas (drawer) — hover deixa o "clicável" óbvio */
+.treemap-dept:hover { filter: brightness(0.9); outline: 1px solid rgba(0,0,0,0.25); }
+[data-ck="dept-row"]:hover, [data-ck="hc-row"]:hover { background: var(--bg-hover); }
 .treemap-block-title {
   font-size: 11px; font-weight: 700;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
