@@ -51,14 +51,39 @@ _APP_DIR = ROOT / "cockpit-app"
 if _APP_DIR.is_dir():                               # guarda: só monta se existir
     from fastapi.staticfiles import StaticFiles
 
+    import re as _re
+    from fastapi.responses import HTMLResponse
+
+    def _app_asset_ver():
+        """Versão do frontend = maior mtime dos .js/.css locais (hex). Muda quando
+        um deploy altera qualquer arquivo do app; estável entre restarts."""
+        mt = 0
+        for p in _APP_DIR.rglob("*"):
+            if p.suffix in (".js", ".css"):
+                try:
+                    mt = max(mt, int(p.stat().st_mtime))
+                except OSError:
+                    pass
+        return format(mt, "x")
+
+    _ASSET_VER = _app_asset_ver()
+
     class _NoCacheStatic(StaticFiles):
-        """StaticFiles com Cache-Control: no-cache. Sem esse header o Cloudflare
-        aplica TTL default de 4h aos .js/.css (Cf-Cache-Status: HIT) e, após um
-        deploy, clientes ficam até 4h rodando o frontend ANTIGO (ex.: seletor de
-        empresa 'invisível'). no-cache = pode guardar, mas REVALIDA sempre (o
-        ETag/Last-Modified do StaticFiles devolve 304 quando nada mudou)."""
-        def file_response(self, *args, **kwargs):
-            resp = super().file_response(*args, **kwargs)
+        """Anti-cache-velho em duas camadas (o Cloudflare do cliente reescreve
+        Cache-Control p/ max-age=14400 em asset cacheado — Browser Cache TTL do
+        zone, fora do nosso controle — então só `no-cache` não basta):
+        1. index.html sai com no-cache E com os src/href locais carimbados com
+           ?v=<versão do deploy> — URL nova a cada deploy ⇒ cache antigo (edge OU
+           navegador) nunca é consultado.
+        2. Demais arquivos saem com no-cache (revalidação ETag → 304 barato) para
+           quem acessa o origin direto, sem CDN na frente."""
+        async def get_response(self, path, scope):
+            if path in ("", ".", "index.html"):
+                html = (_APP_DIR / "index.html").read_text(encoding="utf-8")
+                html = _re.sub(r'((?:src|href)="(?:js|css)/[^"?]+)"',
+                               r'\1?v=' + _ASSET_VER + '"', html)
+                return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
+            resp = await super().get_response(path, scope)
             resp.headers["Cache-Control"] = "no-cache"
             return resp
 
