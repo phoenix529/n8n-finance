@@ -50,7 +50,19 @@ app.include_router(api_cockpit.router)
 _APP_DIR = ROOT / "cockpit-app"
 if _APP_DIR.is_dir():                               # guarda: só monta se existir
     from fastapi.staticfiles import StaticFiles
-    app.mount("/app", StaticFiles(directory=str(_APP_DIR), html=True), name="cockpit-app")
+
+    class _NoCacheStatic(StaticFiles):
+        """StaticFiles com Cache-Control: no-cache. Sem esse header o Cloudflare
+        aplica TTL default de 4h aos .js/.css (Cf-Cache-Status: HIT) e, após um
+        deploy, clientes ficam até 4h rodando o frontend ANTIGO (ex.: seletor de
+        empresa 'invisível'). no-cache = pode guardar, mas REVALIDA sempre (o
+        ETag/Last-Modified do StaticFiles devolve 304 quando nada mudou)."""
+        def file_response(self, *args, **kwargs):
+            resp = super().file_response(*args, **kwargs)
+            resp.headers["Cache-Control"] = "no-cache"
+            return resp
+
+    app.mount("/app", _NoCacheStatic(directory=str(_APP_DIR), html=True), name="cockpit-app")
 
 
 class Pergunta(BaseModel):
