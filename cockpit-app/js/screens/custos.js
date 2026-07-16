@@ -285,6 +285,7 @@
   function pintaKpis(el, grupo) {
     var row = el.querySelector('[data-ck="kpis"]');
     if (!row) return;
+    row.style.gridTemplateColumns = ''; // desfaz o grid de 3 colunas da visão por empresa
     if (!grupo) {
       row.innerHTML = '<div class="kpi-card red"><div class="kpi-label">Erro</div>' +
         '<div class="kpi-compare">Falha ao carregar a folha do grupo.</div></div>';
@@ -802,7 +803,7 @@
           '<div class="chart-card">' +
             '<div class="card-header"><div>' +
               '<div class="card-title">Distribuição Folha por Empresa e Departamento</div>' +
-              '<div class="card-subtitle">' + (total
+              '<div class="card-subtitle" data-ck="tm-subtitle">' + (total
                 ? 'Hierarquia Grupo → Empresa → Área · clique num departamento para o drill-down'
                 : 'Hierarquia Empresa → Área (empresas do seu escopo) · clique num departamento para o drill-down') + '</div>' +
             '</div><div class="chip accent">Treemap</div></div>' +
@@ -810,7 +811,7 @@
           '</div>' +
           '<div class="chart-card">' +
             '<div class="card-header"><div>' +
-              '<div class="card-title">Custo por Departamento — ' + (total ? 'maior empresa do mês' : 'empresa selecionada') + '</div>' +
+              '<div class="card-title" data-ck="deptos-title">Custo por Departamento — ' + (total ? 'maior empresa do mês' : 'empresa selecionada') + '</div>' +
               '<div class="card-subtitle">Bolha = headcount · clique numa linha para detalhe e comparação</div>' +
             '</div><div class="chip accent" data-ck="deptos-chip">—</div></div>' +
             '<div data-ck="deptos"><p style="color:var(--text-3);font-size:12px;">Carregando…</p></div>' +
@@ -918,6 +919,13 @@
         destroiCharts();
         // 'grupo' = consolidado (todas); um slug = só aquela empresa (salários incluídos).
         var mostrarGrupo = (empresaSelC === 'grupo');
+        // títulos acompanham a SELEÇÃO (não só o escopo do usuário)
+        var tDeptos = el.querySelector('[data-ck="deptos-title"]');
+        if (tDeptos) tDeptos.textContent = 'Custo por Departamento — ' + (mostrarGrupo ? 'maior empresa do mês' : 'empresa selecionada');
+        var tTm = el.querySelector('[data-ck="tm-subtitle"]');
+        if (tTm) tTm.textContent = (mostrarGrupo
+          ? 'Hierarquia Grupo → Empresa → Área · clique num departamento para o drill-down'
+          : 'Hierarquia Empresa → Área · clique num departamento para o drill-down');
         var pathBase = mostrarGrupo
           ? '/api/folha/grupo' + qsFolha()
           : '/api/folha/' + encodeURIComponent(empresaSelC) + qsFolha();
