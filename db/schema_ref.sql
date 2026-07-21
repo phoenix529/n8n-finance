@@ -106,10 +106,15 @@ CREATE TABLE IF NOT EXISTS fato_folha_mensal (
     extra        NUMERIC(14,2),
     total        NUMERIC(14,2),               -- bruto recebido (col H)
     total_mes    NUMERIC(14,2),               -- custo total empresa (col T)
+    cor_id       INTEGER,                     -- id do usuário no COR (col AC "COR ID")
+    cliente_dedicado VARCHAR(60),             -- cliente atendido pela pessoa (col AD)
     UNIQUE (empresa_id, periodo_id, nome, departamento, cargo)
 );
 -- Migração idempotente p/ DBs criados antes da coluna de custo total.
 ALTER TABLE fato_folha_mensal ADD COLUMN IF NOT EXISTS total_mes NUMERIC(14,2);
+-- Junção folha↔COR + cliente dedicado por pessoa (colunas novas do cliente, Jul→Dez/26).
+ALTER TABLE fato_folha_mensal ADD COLUMN IF NOT EXISTS cor_id INTEGER;
+ALTER TABLE fato_folha_mensal ADD COLUMN IF NOT EXISTS cliente_dedicado VARCHAR(60);
 
 -- ----------------------------------------------------------------------------
 -- 5.4 Controle de carga

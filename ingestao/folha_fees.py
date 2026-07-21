@@ -56,6 +56,12 @@ CREATE TABLE IF NOT EXISTS fato_folha_mensal (
 -- total_mes (col T "TOTAL MÊS" = custo total empresa). Migração idempotente
 -- p/ DBs que já tinham a tabela só com 'total' (col H, bruto).
 ALTER TABLE fato_folha_mensal ADD COLUMN IF NOT EXISTS total_mes NUMERIC(14,2);
+-- cor_id (col AC "COR ID" — id do usuário no COR, chave de junção folha↔API COR;
+-- cliente adicionou a coluna Jul→Dez/2026) e cliente_dedicado (col AD "CLIENTE" —
+-- cliente atendido pela pessoa; futura fonte OFICIAL do custo dedicado por cliente,
+-- hoje inferido por sufixo de departamento). Ambas NULL até o cliente preencher.
+ALTER TABLE fato_folha_mensal ADD COLUMN IF NOT EXISTS cor_id INTEGER;
+ALTER TABLE fato_folha_mensal ADD COLUMN IF NOT EXISTS cliente_dedicado VARCHAR(60);
 CREATE TABLE IF NOT EXISTS fato_fee_cliente (
     id         SERIAL PRIMARY KEY,
     empresa_id INT,
@@ -133,6 +139,13 @@ def parse_folha(wb, path):
                 total_mes = _num(g(row, "TOTAL MES"))
             if total_mes is None:
                 total_mes = total
+            # col AC "COR ID" = id do usuário no COR (junção folha↔API; int, NULL até preencher)
+            _cid = _num(g(row, "COR ID"))
+            cor_id = int(_cid) if _cid is not None and float(_cid).is_integer() and _cid > 0 else None
+            # col AD "CLIENTE" = cliente dedicado da pessoa ("-"/vazio = compartilhado)
+            _cli = g(row, "CLIENTE")
+            cliente_ded = (str(_cli).strip()[:60] if isinstance(_cli, str) and _cli.strip()
+                           and _cli.strip() != "-" else None)
             out.append({
                 "year": year, "month": mnum,
                 "nome": nome.strip()[:160], "departamento": dep.strip()[:120],
@@ -142,6 +155,8 @@ def parse_folha(wb, path):
                 "extra": _num(g(row, "EXTRA")) or 0.0,
                 "total": total,
                 "total_mes": total_mes,
+                "cor_id": cor_id,
+                "cliente_dedicado": cliente_ded,
             })
     return out
 
@@ -209,15 +224,19 @@ def upsert_folha(cur, empresa, rows, ec, pc):
         if k in agg:                                    # mesma pessoa 2x na aba -> soma
             a = agg[k]
             agg[k] = (a[0], r["tipo"], a[2] + r["salario"], a[3] + r["extra"],
-                      a[4] + r["total"], a[5] + r["total_mes"])
+                      a[4] + r["total"], a[5] + r["total_mes"],
+                      a[6] if a[6] is not None else r["cor_id"],
+                      a[7] if a[7] is not None else r["cliente_dedicado"])
         else:
-            agg[k] = (k, r["tipo"], r["salario"], r["extra"], r["total"], r["total_mes"])
+            agg[k] = (k, r["tipo"], r["salario"], r["extra"], r["total"], r["total_mes"],
+                      r["cor_id"], r["cliente_dedicado"])
     valores = [(k[0], k[1], k[2], k[3], k[4], v[1], round(v[2], 2), round(v[3], 2),
-                round(v[4], 2), round(v[5], 2))
+                round(v[4], 2), round(v[5], 2), v[6], v[7])
                for k, v in agg.items()]
     execute_values(cur, """
         INSERT INTO fato_folha_mensal (empresa_id, periodo_id, nome, departamento, cargo,
-                                       tipo, salario, extra, total, total_mes) VALUES %s
+                                       tipo, salario, extra, total, total_mes,
+                                       cor_id, cliente_dedicado) VALUES %s
     """, valores)
     return len(valores)
 

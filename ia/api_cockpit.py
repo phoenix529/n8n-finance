@@ -175,6 +175,8 @@ CREATE TABLE IF NOT EXISTS fato_folha_mensal (
 -- total_mes = CUSTO TOTAL p/ a empresa (col T "TOTAL MÊS" = bruto+VT+VR+FGTS+INSS).
 -- Migração idempotente p/ DBs existentes (o 'total' já carregado é só o bruto, col H).
 ALTER TABLE fato_folha_mensal ADD COLUMN IF NOT EXISTS total_mes NUMERIC(14,2);
+ALTER TABLE fato_folha_mensal ADD COLUMN IF NOT EXISTS cor_id INTEGER;
+ALTER TABLE fato_folha_mensal ADD COLUMN IF NOT EXISTS cliente_dedicado VARCHAR(60);
 CREATE TABLE IF NOT EXISTS fato_fee_cliente (
     id         SERIAL PRIMARY KEY,
     empresa_id INT NOT NULL REFERENCES dim_empresa(id),
